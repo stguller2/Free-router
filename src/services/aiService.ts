@@ -11,26 +11,34 @@ export class AIService {
     return this.ai;
   }
 
-  static async callProxy(provider: string, prompt: string, apiKey?: string, modelName?: string, history?: Message[], systemInstruction?: string) {
+  static async callProxy(provider: string, prompt: string, apiKey?: string, modelName?: string, history?: Message[], systemInstruction?: string, signal?: AbortSignal) {
     const response = await fetch("/api/ai/proxy", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ provider, prompt, apiKey, modelName, history, systemInstruction }),
+      signal
     });
 
     if (response.status === 429) throw new Error("QUOTA_EXCEEDED");
+    if (response.status === 504 || response.status === 503) throw new Error("TIMEOUT");
     if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.error || "API error");
+      let errorMessage = "API Hatası";
+      try {
+        const data = await response.json();
+        errorMessage = data.error || data.details || errorMessage;
+      } catch (e) {
+        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      }
+      throw new Error(errorMessage);
     }
 
     const data = await response.json();
     return data.text;
   }
 
-  static async callGemini(prompt: string, history?: Message[], systemInstruction?: string, attachments?: { data: string, mimeType: string }[]) {
+  static async callGemini(prompt: string, history?: Message[], systemInstruction?: string, attachments?: { data: string, mimeType: string }[], signal?: AbortSignal) {
     const ai = this.getGemini();
     
     // Format history for Gemini
@@ -55,7 +63,7 @@ export class AIService {
 
     contents.push({ role: 'user', parts: userParts });
 
-    const response = await ai.models.generateContent({
+    const responsePromise = ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents,
       config: {
@@ -63,31 +71,43 @@ export class AIService {
       }
     });
 
+    const timeoutPromise = new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error("TIMEOUT")), 60000)
+    );
+
+    const abortPromise = new Promise<never>((_, reject) => {
+      if (signal) {
+        signal.addEventListener('abort', () => reject(new Error("ABORTED")));
+      }
+    });
+
+    const response = await Promise.race([responsePromise, timeoutPromise, abortPromise]);
+
     return response.text;
   }
 
-  static async callOpenAI(prompt: string, apiKey: string, history?: Message[], systemInstruction?: string) {
-    return this.callProxy('openai', prompt, apiKey, undefined, history, systemInstruction);
+  static async callOpenAI(prompt: string, apiKey: string, history?: Message[], systemInstruction?: string, signal?: AbortSignal) {
+    return this.callProxy('openai', prompt, apiKey, undefined, history, systemInstruction, signal);
   }
 
-  static async callAnthropic(prompt: string, apiKey: string, history?: Message[], systemInstruction?: string) {
-    return this.callProxy('anthropic', prompt, apiKey, undefined, history, systemInstruction);
+  static async callAnthropic(prompt: string, apiKey: string, history?: Message[], systemInstruction?: string, signal?: AbortSignal) {
+    return this.callProxy('anthropic', prompt, apiKey, undefined, history, systemInstruction, signal);
   }
 
-  static async callDeepSeek(prompt: string, apiKey: string, history?: Message[], systemInstruction?: string) {
-    return this.callProxy('deepseek', prompt, apiKey, undefined, history, systemInstruction);
+  static async callDeepSeek(prompt: string, apiKey: string, history?: Message[], systemInstruction?: string, signal?: AbortSignal) {
+    return this.callProxy('deepseek', prompt, apiKey, undefined, history, systemInstruction, signal);
   }
 
-  static async callGroq(prompt: string, apiKey: string, history?: Message[], systemInstruction?: string) {
-    return this.callProxy('groq', prompt, apiKey, undefined, history, systemInstruction);
+  static async callGroq(prompt: string, apiKey: string, history?: Message[], systemInstruction?: string, signal?: AbortSignal) {
+    return this.callProxy('groq', prompt, apiKey, undefined, history, systemInstruction, signal);
   }
 
-  static async callMistral(prompt: string, apiKey: string, history?: Message[], systemInstruction?: string) {
-    return this.callProxy('mistral', prompt, apiKey, undefined, history, systemInstruction);
+  static async callMistral(prompt: string, apiKey: string, history?: Message[], systemInstruction?: string, signal?: AbortSignal) {
+    return this.callProxy('mistral', prompt, apiKey, undefined, history, systemInstruction, signal);
   }
 
-  static async callOpenRouter(prompt: string, apiKey: string, modelId: string, history?: Message[], systemInstruction?: string) {
-    return this.callProxy('openrouter', prompt, apiKey, modelId, history, systemInstruction);
+  static async callOpenRouter(prompt: string, apiKey: string, modelId: string, history?: Message[], systemInstruction?: string, signal?: AbortSignal) {
+    return this.callProxy('openrouter', prompt, apiKey, modelId, history, systemInstruction, signal);
   }
 
   static async fetchOpenRouterFreeModels(apiKey: string) {

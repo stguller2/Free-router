@@ -28,7 +28,8 @@ import {
   Sun,
   Moon,
   Plus,
-  Database
+  Database,
+  Square
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
@@ -121,6 +122,19 @@ export default function App() {
   const [copyStatus, setCopyStatus] = useState<number | null>(null);
   const [tokenSpeed, setTokenSpeed] = useState(0);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as 'dark' | 'light') || 'dark');
+  const [lastFailedRequest, setLastFailedRequest] = useState<{
+    prompt: string;
+    modelId: string;
+    history: Message[];
+    attachments?: { data: string, mimeType: string }[];
+  } | null>(null);
+
+  const modelsRef = useRef(models);
+  useEffect(() => {
+    modelsRef.current = models;
+  }, [models]);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -314,9 +328,9 @@ export default function App() {
     }
   };
 
-  const findNextAvailableModel = (currentId: string) => {
-    return models.find(m => 
-      m.id !== currentId && 
+  const findNextAvailableModel = (excludeIds: string[]) => {
+    return modelsRef.current.find(m => 
+      !excludeIds.includes(m.id) && 
       m.isAvailable && 
       m.status !== 'exhausted' && 
       m.quotaUsed < m.quotaLimit
@@ -326,12 +340,19 @@ export default function App() {
   const handleSend = async () => {
     if ((!input.trim() && !attachedFile) || isLoading) return;
 
+    // Abort any existing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     let finalPrompt = input;
     let attachments: { data: string, mimeType: string }[] = [];
     const currentFile = attachedFile;
 
     setIsLoading(true);
     setError(null);
+    setLastFailedRequest(null);
     setRoutingStatus('stable');
 
     const currentHistory = [...messages];
@@ -367,19 +388,31 @@ export default function App() {
       setInput('');
       setAttachedFile(null);
 
-      await attemptAIRequest(finalPrompt, activeModelId, currentHistory, attachments);
+      await attemptAIRequest(finalPrompt, activeModelId, currentHistory, attachments, abortControllerRef.current?.signal);
     } catch (err: any) {
+      if (err.message === 'ABORTED') {
+        setIsLoading(false);
+        return;
+      }
+
+      setLastFailedRequest({
+        prompt: finalPrompt,
+        modelId: activeModelId,
+        history: currentHistory,
+        attachments
+      });
+
       if (isSmartRouting) {
         setRoutingStatus('routing');
         let currentFailedModelId = activeModelId;
+        let exhaustedIds = [activeModelId];
         let lastError = err;
-        let success = false;
 
         // Try to find and use next models until success or exhaustion
         while (true) {
           setModels(prev => prev.map(m => m.id === currentFailedModelId ? { ...m, status: 'exhausted' } : m));
-          const currentModel = models.find(m => m.id === currentFailedModelId);
-          const nextModel = findNextAvailableModel(currentFailedModelId);
+          const currentModel = modelsRef.current.find(m => m.id === currentFailedModelId);
+          const nextModel = findNextAvailableModel(exhaustedIds);
 
           if (!nextModel) {
             setRoutingStatus('exhausted');
@@ -387,7 +420,11 @@ export default function App() {
             break;
           }
 
-          const reason = lastError.message === 'QUOTA_EXCEEDED' ? "kotası doldu" : "bağlantı hatası verdi";
+          exhaustedIds.push(nextModel.id);
+          let reason = "bağlantı hatası verdi";
+          if (lastError.message === 'QUOTA_EXCEEDED') reason = "kotası doldu";
+          else if (lastError.message === 'TIMEOUT') reason = "zaman aşımına uğradı";
+
           const systemMsg: Message = {
             id: `sys-${Date.now()}`,
             role: 'system',
@@ -399,26 +436,42 @@ export default function App() {
           setActiveModelId(nextModel.id);
           
           try {
-            await attemptAIRequest(finalPrompt, nextModel.id, currentHistory, attachments);
+            // We need to pass the actual model object or data because models state is stale here
+            await attemptAIRequest(finalPrompt, nextModel.id, currentHistory, attachments, abortControllerRef.current?.signal);
             setRoutingStatus('stable');
-            success = true;
+            setLastFailedRequest(null);
             break;
           } catch (retryErr: any) {
+            if (retryErr.message === 'ABORTED') {
+              setIsLoading(false);
+              return;
+            }
             currentFailedModelId = nextModel.id;
             lastError = retryErr;
+            setLastFailedRequest({
+              prompt: finalPrompt,
+              modelId: nextModel.id,
+              history: currentHistory,
+              attachments
+            });
             // Continue loop to try next model
           }
         }
       } else {
-        setError(err.message || "Bir hata oluştu.");
+        let errorMsg = err.message || "Bilinmeyen bir hata oluştu.";
+        if (err.message === 'QUOTA_EXCEEDED') errorMsg = "Modelin kullanım kotası doldu. Lütfen başka bir model seçin veya daha sonra tekrar deneyin.";
+        else if (err.message === 'TIMEOUT') errorMsg = "İstek zaman aşımına uğradı. Model şu an çok yoğun olabilir.";
+        else if (err.name === 'AbortError' || err.message === 'ABORTED') errorMsg = "İstek iptal edildi.";
+        
+        setError(errorMsg);
       }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const attemptAIRequest = async (prompt: string, modelId: string, history: Message[], attachments?: { data: string, mimeType: string }[]) => {
-    const model = models.find(m => m.id === modelId)!;
+  const attemptAIRequest = async (prompt: string, modelId: string, history: Message[], attachments?: { data: string, mimeType: string }[], signal?: AbortSignal) => {
+    const model = modelsRef.current.find(m => m.id === modelId)!;
     
     // Check local quota before calling API
     if (model.quotaUsed >= model.quotaLimit) {
@@ -447,19 +500,19 @@ export default function App() {
     let responseText = "";
     try {
       if (model.provider === 'gemini') {
-        responseText = await AIService.callGemini(prompt, history, finalSystemPrompt, attachments);
+        responseText = await AIService.callGemini(prompt, history, finalSystemPrompt, attachments, signal);
       } else if (model.provider === 'openrouter' && model.apiKey) {
-        responseText = await AIService.callOpenRouter(prompt, model.apiKey, model.id, history, finalSystemPrompt);
+        responseText = await AIService.callOpenRouter(prompt, model.apiKey, model.id, history, finalSystemPrompt, signal);
       } else if (model.provider === 'openai' && model.apiKey) {
-        responseText = await AIService.callOpenAI(prompt, model.apiKey, history, finalSystemPrompt);
+        responseText = await AIService.callOpenAI(prompt, model.apiKey, history, finalSystemPrompt, signal);
       } else if (model.provider === 'anthropic' && model.apiKey) {
-        responseText = await AIService.callAnthropic(prompt, model.apiKey, history, finalSystemPrompt);
+        responseText = await AIService.callAnthropic(prompt, model.apiKey, history, finalSystemPrompt, signal);
       } else if (model.provider === 'deepseek' && model.apiKey) {
-        responseText = await AIService.callDeepSeek(prompt, model.apiKey, history, finalSystemPrompt);
+        responseText = await AIService.callDeepSeek(prompt, model.apiKey, history, finalSystemPrompt, signal);
       } else if (model.provider === 'groq' && model.apiKey) {
-        responseText = await AIService.callGroq(prompt, model.apiKey, history, finalSystemPrompt);
+        responseText = await AIService.callGroq(prompt, model.apiKey, history, finalSystemPrompt, signal);
       } else if (model.provider === 'mistral' && model.apiKey) {
-        responseText = await AIService.callMistral(prompt, model.apiKey, history, finalSystemPrompt);
+        responseText = await AIService.callMistral(prompt, model.apiKey, history, finalSystemPrompt, signal);
       } else {
         throw new Error("API anahtarı eksik.");
       }
@@ -487,6 +540,101 @@ export default function App() {
       setModels(prev => prev.map(m => m.id === modelId ? { ...m, status: error instanceof Error && error.message === 'QUOTA_EXCEEDED' ? 'exhausted' : 'error' } : m));
       throw error;
     }
+  };
+
+  const handleRetry = async () => {
+    if (!lastFailedRequest || isLoading) return;
+    
+    const { prompt, modelId, history, attachments } = lastFailedRequest;
+    
+    // Abort any existing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
+    setIsLoading(true);
+    setError(null);
+    setLastFailedRequest(null);
+    setRoutingStatus('stable');
+
+    try {
+      await attemptAIRequest(prompt, modelId, history, attachments, abortControllerRef.current?.signal);
+    } catch (err: any) {
+      if (err.message === 'ABORTED') {
+        setIsLoading(false);
+        return;
+      }
+
+      setLastFailedRequest({ prompt, modelId, history, attachments });
+
+      if (isSmartRouting) {
+        setRoutingStatus('routing');
+        let currentFailedModelId = modelId;
+        let exhaustedIds = [modelId];
+        let lastError = err;
+
+        while (true) {
+          setModels(prev => prev.map(m => m.id === currentFailedModelId ? { ...m, status: 'exhausted' } : m));
+          const currentModel = modelsRef.current.find(m => m.id === currentFailedModelId);
+          const nextModel = findNextAvailableModel(exhaustedIds);
+
+          if (!nextModel) {
+            setRoutingStatus('exhausted');
+            setError("Kullanılabilir başka model bulunamadı veya tüm modeller başarısız oldu.");
+            break;
+          }
+
+          exhaustedIds.push(nextModel.id);
+          let reason = "bağlantı hatası verdi";
+          if (lastError.message === 'QUOTA_EXCEEDED') reason = "kotası doldu";
+          else if (lastError.message === 'TIMEOUT') reason = "zaman aşımına uğradı";
+
+          const systemMsg: Message = {
+            id: `sys-${Date.now()}`,
+            role: 'system',
+            content: `🔄 ${currentModel?.name || 'Model'} ${reason}. Otomatik olarak ${nextModel.name} modeline geçiliyor...`,
+            timestamp: Date.now(),
+          };
+          
+          setMessages(prev => [...prev, systemMsg]);
+          setActiveModelId(nextModel.id);
+          
+          try {
+            await attemptAIRequest(prompt, nextModel.id, history, attachments, abortControllerRef.current?.signal);
+            setRoutingStatus('stable');
+            setLastFailedRequest(null);
+            break;
+          } catch (retryErr: any) {
+            if (retryErr.message === 'ABORTED') {
+              setIsLoading(false);
+              return;
+            }
+            currentFailedModelId = nextModel.id;
+            lastError = retryErr;
+            setLastFailedRequest({ prompt, modelId: nextModel.id, history, attachments });
+          }
+        }
+      } else {
+        let errorMsg = err.message || "Bilinmeyen bir hata oluştu.";
+        if (err.message === 'QUOTA_EXCEEDED') errorMsg = "Modelin kullanım kotası doldu. Lütfen başka bir model seçin veya daha sonra tekrar deneyin.";
+        else if (err.message === 'TIMEOUT') errorMsg = "İstek zaman aşımına uğradı. Model şu an çok yoğun olabilir.";
+        else if (err.name === 'AbortError' || err.message === 'ABORTED') errorMsg = "İstek iptal edildi.";
+
+        setError(errorMsg);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsLoading(false);
+    setRoutingStatus('stable');
   };
 
   const updateApiKey = (id: string, key: string) => {
@@ -1098,6 +1246,20 @@ export default function App() {
                     "text-xs leading-relaxed",
                     theme === 'dark' ? "text-red-200/70" : "text-red-600"
                   )}>{error}</p>
+                  {lastFailedRequest && (
+                    <button 
+                      onClick={handleRetry}
+                      className={cn(
+                        "mt-2 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 transition-all",
+                        theme === 'dark' 
+                          ? "bg-red-500/20 text-red-400 hover:bg-red-500/30" 
+                          : "bg-red-100 text-red-700 hover:bg-red-200"
+                      )}
+                    >
+                      <RefreshCw size={12} className={isLoading ? "animate-spin" : ""} />
+                      Yeniden Dene
+                    </button>
+                  )}
                 </div>
                 <button onClick={() => setError(null)} className={cn(
                   "transition-colors",
@@ -1193,16 +1355,19 @@ export default function App() {
                 </button>
                 
                 <button
-                  onClick={handleSend}
-                  disabled={isLoading || (!input.trim() && !attachedFile)}
+                  onClick={isLoading ? handleStop : handleSend}
+                  disabled={!isLoading && (!input.trim() && !attachedFile)}
                   className={cn(
                     "p-2.5 rounded-xl transition-all flex items-center justify-center",
-                    isLoading || (!input.trim() && !attachedFile)
+                    !isLoading && (!input.trim() && !attachedFile)
                       ? (theme === 'dark' ? "bg-[#222] text-[#444]" : "bg-gray-200 text-gray-400")
-                      : "bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20"
+                      : isLoading 
+                        ? "bg-red-500 text-white hover:bg-red-600 shadow-lg shadow-red-500/20"
+                        : "bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20"
                   )}
+                  title={isLoading ? "Durdur" : "Gönder"}
                 >
-                  {isLoading ? <RefreshCw size={18} className="animate-spin" /> : <Send size={18} />}
+                  {isLoading ? <Square size={18} fill="currentColor" /> : <Send size={18} />}
                 </button>
               </div>
             </div>

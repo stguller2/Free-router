@@ -78,6 +78,9 @@ async function startServer() {
         { role: "user", content: prompt }
       ];
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+
       if (provider === 'openai') {
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
@@ -89,7 +92,9 @@ async function startServer() {
             model: modelName || "gpt-3.5-turbo",
             messages: commonMessages,
           }),
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
         if (response.status === 429) return res.status(429).json({ error: "QUOTA_EXCEEDED" });
         const data = await response.json();
         return res.json({ text: data.choices[0].message.content });
@@ -116,7 +121,9 @@ async function startServer() {
             system: systemMsg,
             messages: anthropicMessages,
           }),
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
         if (response.status === 429) return res.status(429).json({ error: "QUOTA_EXCEEDED" });
         const data = await response.json();
         return res.json({ text: data.content[0].text });
@@ -133,7 +140,9 @@ async function startServer() {
             model: modelName || "deepseek-chat",
             messages: commonMessages,
           }),
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
         if (response.status === 429) return res.status(429).json({ error: "QUOTA_EXCEEDED" });
         const data = await response.json();
         return res.json({ text: data.choices[0].message.content });
@@ -150,7 +159,9 @@ async function startServer() {
             model: modelName || "llama3-8b-8192",
             messages: commonMessages,
           }),
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
         if (response.status === 429) return res.status(429).json({ error: "QUOTA_EXCEEDED" });
         const data = await response.json();
         return res.json({ text: data.choices[0].message.content });
@@ -167,7 +178,9 @@ async function startServer() {
             model: modelName || "mistral-tiny",
             messages: commonMessages,
           }),
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
         if (response.status === 429) return res.status(429).json({ error: "QUOTA_EXCEEDED" });
         const data = await response.json();
         return res.json({ text: data.choices[0].message.content });
@@ -186,7 +199,9 @@ async function startServer() {
             model: modelName,
             messages: commonMessages,
           }),
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
         
         const data = await response.json();
         if (response.status === 429 || (data.error && (data.error.code === 429 || data.error.message?.toLowerCase().includes('limit')))) {
