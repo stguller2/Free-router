@@ -1,0 +1,1123 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  MessageSquare, 
+  Settings, 
+  Zap, 
+  RefreshCw, 
+  Send, 
+  Bot, 
+  User, 
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  ChevronRight,
+  ShieldCheck,
+  Cpu,
+  Mic,
+  Paperclip,
+  X,
+  Terminal,
+  Layout,
+  Command,
+  Activity,
+  History,
+  Trash2,
+  Copy,
+  Check,
+  Sun,
+  Moon,
+  Plus
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import ReactMarkdown from 'react-markdown';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+import { AIService } from './services/aiService';
+import { AIModel, Message } from './types';
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+const INITIAL_MODELS: AIModel[] = [
+  { id: 'gemini-flash', name: 'Gemini 3 Flash', provider: 'gemini', quotaLimit: 15, quotaUsed: 0, isAvailable: true, status: 'idle' },
+  { id: 'gpt-3.5', name: 'ChatGPT 3.5', provider: 'openai', quotaLimit: 10, quotaUsed: 0, isAvailable: false, status: 'idle' },
+  { id: 'claude-haiku', name: 'Claude 3 Haiku', provider: 'anthropic', quotaLimit: 5, quotaUsed: 0, isAvailable: false, status: 'idle' },
+  { id: 'deepseek-chat', name: 'DeepSeek Chat', provider: 'deepseek', quotaLimit: 10, quotaUsed: 0, isAvailable: false, status: 'idle' },
+  { id: 'groq-llama', name: 'Groq Llama 3', provider: 'groq', quotaLimit: 20, quotaUsed: 0, isAvailable: false, status: 'idle' },
+  { id: 'mistral-tiny', name: 'Mistral Tiny', provider: 'mistral', quotaLimit: 10, quotaUsed: 0, isAvailable: false, status: 'idle' },
+  // OpenRouter Free Tier Models (v1)
+  { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle' },
+  { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle' },
+  { id: 'meta-llama/llama-3-8b-instruct:free', name: 'Llama 3 8B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle' },
+  { id: 'huggingfaceh4/zephyr-7b-beta:free', name: 'Zephyr 7B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle' },
+];
+
+export default function App() {
+  const [models, setModels] = useState<AIModel[]>(() => {
+    const saved = localStorage.getItem('ai_hub_models');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+    return INITIAL_MODELS;
+  });
+
+  const [activeModelId, setActiveModelId] = useState('gemini-flash');
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSmartRouting, setIsSmartRouting] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [routingStatus, setRoutingStatus] = useState<'stable' | 'routing' | 'exhausted'>('stable');
+  const [openRouterKey, setOpenRouterKey] = useState(() => localStorage.getItem('openrouter_key') || '');
+  const [systemPrompt, setSystemPrompt] = useState('Sen yardımcı bir yapay zeka asistanısın.');
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [isRecording, setIsRecording] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [copyStatus, setCopyStatus] = useState<number | null>(null);
+  const [tokenSpeed, setTokenSpeed] = useState(0);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as 'dark' | 'light') || 'dark');
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem('ai_hub_models', JSON.stringify(models));
+    localStorage.setItem('openrouter_key', openRouterKey);
+    localStorage.setItem('theme', theme);
+    
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [models, openRouterKey, theme]);
+
+  // Save conversation to memory.md whenever messages change
+  useEffect(() => {
+    const saveMemory = async () => {
+      if (messages.length === 0) return;
+
+      const markdown = messages.map(m => {
+        const role = m.role === 'user' ? '### User' : (m.role === 'system' ? '### System' : '### Assistant');
+        const time = new Date(m.timestamp || Date.now()).toLocaleString('tr-TR');
+        const modelInfo = m.modelId ? ` [Model: ${m.modelId}]` : '';
+        return `${role}${modelInfo} (${time})\n\n${m.content}\n\n---\n`;
+      }).join('\n');
+
+      try {
+        await fetch('/api/memory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: markdown })
+        });
+      } catch (err) {
+        console.error("Failed to save memory.md:", err);
+      }
+    };
+
+    const timeoutId = setTimeout(saveMemory, 1000); // Debounce save
+    return () => clearTimeout(timeoutId);
+  }, [messages]);
+
+  useEffect(() => {
+    setConnectionStatus('idle');
+  }, [openRouterKey]);
+
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Alt + 1-9 to switch models
+      if (e.altKey && e.key >= '1' && e.key <= '9') {
+        const index = parseInt(e.key) - 1;
+        if (models[index]) {
+          const targetModel = models[index];
+          setActiveModelId(targetModel.id);
+          const systemMsg: Message = {
+            id: `sys-manual-${Date.now()}`,
+            role: 'system',
+            content: `🎯 Modele geçildi: ${targetModel.name}`,
+            timestamp: Date.now(),
+          };
+          setMessages(prev => [...prev, systemMsg]);
+          inputRef.current?.focus();
+          e.preventDefault();
+        }
+      }
+      // Ctrl + Enter to send
+      if (e.ctrlKey && e.key === 'Enter') {
+        handleSend();
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [models, activeModelId, input, isLoading]);
+
+  const activeModel = models.find(m => m.id === activeModelId) || models[0];
+
+  const connectOpenRouter = async () => {
+    console.log("Connect button clicked, key length:", openRouterKey.length);
+    if (!openRouterKey.trim()) return;
+    setIsConnecting(true);
+    setConnectionStatus('idle');
+    setError(null);
+    try {
+      console.log("Fetching models from OpenRouter...");
+      const freeModels = await AIService.fetchOpenRouterFreeModels(openRouterKey);
+      console.log("Models received:", freeModels.length);
+      
+      const newModels: AIModel[] = freeModels.map((m: any) => ({
+        id: m.id,
+        name: m.name || m.id.split('/')[1],
+        provider: 'openrouter',
+        quotaLimit: 50, // Arbitrary high limit for free tier
+        quotaUsed: 0,
+        isAvailable: true,
+        apiKey: openRouterKey,
+        status: 'idle'
+      }));
+
+      // Keep existing non-openrouter models and add new ones
+      setModels(prev => {
+        const filtered = prev.filter(m => m.provider !== 'openrouter');
+        return [...filtered, ...newModels];
+      });
+      
+      if (newModels.length > 0) {
+        setConnectionStatus('success');
+        setActiveModelId(newModels[0].id);
+        setSuccessMessage(`Başarılı! ${newModels.length} ücretsiz model havuzuna eklendi.`);
+        setTimeout(() => setSuccessMessage(null), 5000);
+      } else {
+        setConnectionStatus('error');
+        setError("Hiç ücretsiz model bulunamadı. Lütfen API anahtarını kontrol edin.");
+      }
+    } catch (err: any) {
+      setConnectionStatus('error');
+      console.error("Connection error:", err);
+      setError("OpenRouter bağlantısı başarısız: " + (err.message || "Bilinmeyen hata"));
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const findNextAvailableModel = (currentId: string) => {
+    return models.find(m => 
+      m.id !== currentId && 
+      m.isAvailable && 
+      m.status !== 'exhausted' && 
+      m.quotaUsed < m.quotaLimit
+    );
+  };
+
+  const handleSend = async () => {
+    if ((!input.trim() && !attachedFile) || isLoading) return;
+
+    let finalPrompt = input;
+    let attachments: { data: string, mimeType: string }[] = [];
+    const currentFile = attachedFile;
+
+    setIsLoading(true);
+    setError(null);
+    setRoutingStatus('stable');
+
+    const currentHistory = [...messages];
+
+    try {
+      if (currentFile) {
+        if (currentFile.type.startsWith('image/')) {
+          const reader = new FileReader();
+          const base64Promise = new Promise<string>((resolve) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(currentFile);
+          });
+          const base64 = await base64Promise;
+          attachments.push({ data: base64, mimeType: currentFile.type });
+        } else if (currentFile.type === 'application/pdf') {
+          const pdfText = await AIService.extractTextFromPdf(currentFile);
+          finalPrompt = `[Döküman İçeriği (${currentFile.name})]:\n${pdfText}\n\n[Kullanıcı Sorusu]:\n${input}`;
+        } else if (currentFile.type.startsWith('text/') || currentFile.name.endsWith('.md') || currentFile.name.endsWith('.json')) {
+          const text = await currentFile.text();
+          finalPrompt = `[Dosya İçeriği (${currentFile.name})]:\n${text}\n\n[Kullanıcı Sorusu]:\n${input}`;
+        }
+      }
+
+      const userMessage: Message = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: currentFile ? `[Dosya: ${currentFile.name}]\n\n${input}` : input,
+        modelId: activeModelId,
+        timestamp: Date.now(),
+      };
+
+      setMessages(prev => [...prev, userMessage]);
+      setInput('');
+      setAttachedFile(null);
+
+      await attemptAIRequest(finalPrompt, activeModelId, currentHistory, attachments);
+    } catch (err: any) {
+      if (isSmartRouting) {
+        const currentModel = models.find(m => m.id === activeModelId);
+        setRoutingStatus('routing');
+        setModels(prev => prev.map(m => m.id === activeModelId ? { ...m, status: 'exhausted' } : m));
+
+        const nextModel = findNextAvailableModel(activeModelId);
+        if (nextModel) {
+          const reason = err.message === 'QUOTA_EXCEEDED' ? "kotası doldu" : "bağlantı hatası verdi";
+          const systemMsg: Message = {
+            id: `sys-${Date.now()}`,
+            role: 'system',
+            content: `🔄 ${currentModel?.name || 'Model'} ${reason}. Otomatik olarak ${nextModel.name} modeline geçiliyor...`,
+            timestamp: Date.now(),
+          };
+          setMessages(prev => [...prev, systemMsg]);
+          setActiveModelId(nextModel.id);
+          try {
+            await attemptAIRequest(finalPrompt, nextModel.id, currentHistory, attachments);
+            setRoutingStatus('stable');
+          } catch (retryErr: any) {
+            setRoutingStatus('exhausted');
+            setError("Tüm denemeler başarısız oldu. Lütfen internet bağlantınızı veya API anahtarlarınızı kontrol edin.");
+          }
+        } else {
+          setRoutingStatus('exhausted');
+          setError("Kullanılabilir başka model bulunamadı.");
+        }
+      } else {
+        setError(err.message || "Bir hata oluştu.");
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const attemptAIRequest = async (prompt: string, modelId: string, history: Message[], attachments?: { data: string, mimeType: string }[]) => {
+    const model = models.find(m => m.id === modelId)!;
+    
+    // Check local quota before calling API
+    if (model.quotaUsed >= model.quotaLimit) {
+      throw new Error("QUOTA_EXCEEDED");
+    }
+
+    setModels(prev => prev.map(m => m.id === modelId ? { ...m, status: 'active' } : m));
+
+    const startTime = Date.now();
+    let responseText = "";
+    try {
+      if (model.provider === 'gemini') {
+        responseText = await AIService.callGemini(prompt, history, systemPrompt, attachments);
+      } else if (model.provider === 'openrouter' && model.apiKey) {
+        responseText = await AIService.callOpenRouter(prompt, model.apiKey, model.id, history, systemPrompt);
+      } else if (model.provider === 'openai' && model.apiKey) {
+        responseText = await AIService.callOpenAI(prompt, model.apiKey, history, systemPrompt);
+      } else if (model.provider === 'anthropic' && model.apiKey) {
+        responseText = await AIService.callAnthropic(prompt, model.apiKey, history, systemPrompt);
+      } else if (model.provider === 'deepseek' && model.apiKey) {
+        responseText = await AIService.callDeepSeek(prompt, model.apiKey, history, systemPrompt);
+      } else if (model.provider === 'groq' && model.apiKey) {
+        responseText = await AIService.callGroq(prompt, model.apiKey, history, systemPrompt);
+      } else if (model.provider === 'mistral' && model.apiKey) {
+        responseText = await AIService.callMistral(prompt, model.apiKey, history, systemPrompt);
+      } else {
+        throw new Error("API anahtarı eksik.");
+      }
+
+      const endTime = Date.now();
+      const durationSeconds = (endTime - startTime) / 1000;
+      const estimatedTokens = responseText.length / 4; // Rough heuristic
+      const speed = durationSeconds > 0 ? Math.round(estimatedTokens / durationSeconds) : 0;
+      
+      setTokenSpeed(speed);
+      
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: responseText,
+        modelId: modelId,
+        timestamp: Date.now(),
+      };
+
+      setMessages(prev => [...prev, aiMessage]);
+      setModels(prev => prev.map(m => 
+        m.id === modelId ? { ...m, quotaUsed: m.quotaUsed + 1, status: 'idle' } : m
+      ));
+    } catch (error) {
+      setModels(prev => prev.map(m => m.id === modelId ? { ...m, status: error instanceof Error && error.message === 'QUOTA_EXCEEDED' ? 'exhausted' : 'error' } : m));
+      throw error;
+    }
+  };
+
+  const updateApiKey = (id: string, key: string) => {
+    setModels(prev => prev.map(m => 
+      m.id === id ? { ...m, apiKey: key, isAvailable: !!key || m.provider === 'gemini', status: 'idle' } : m
+    ));
+  };
+
+  return (
+    <div className={cn(
+      "flex h-screen font-sans selection:bg-blue-500/30 transition-colors duration-300",
+      theme === 'dark' ? "bg-[#0B0B0B] text-[#E0E0E0]" : "bg-[#F5F5F7] text-gray-900"
+    )}>
+      {/* Sidebar - Model Management */}
+      <aside className={cn(
+        "w-[300px] border-r flex flex-col transition-colors duration-300",
+        theme === 'dark' ? "bg-[#0F0F0F] border-[#1E1E1E]" : "bg-white border-gray-200"
+      )}>
+        <div className={cn(
+          "p-4 border-b flex items-center justify-between",
+          theme === 'dark' ? "border-[#1E1E1E]" : "border-gray-100"
+        )}>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center">
+              <Zap size={14} className="text-white fill-white" />
+            </div>
+            <span className="font-bold text-sm tracking-tight">Free Router</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={() => {
+                if (window.confirm("Tüm konuşma geçmişi silinecek. Emin misiniz?")) {
+                  setMessages([]);
+                  setSuccessMessage("Yeni sohbet başlatıldı.");
+                  setTimeout(() => setSuccessMessage(null), 3000);
+                }
+              }}
+              className={cn(
+                "p-1.5 rounded-md transition-colors flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider",
+                theme === 'dark' ? "hover:bg-[#2A2A2A] text-[#888] hover:text-blue-400" : "hover:bg-gray-100 text-gray-500 hover:text-blue-600"
+              )}
+              title="Yeni Sohbet"
+            >
+              <Plus size={14} />
+              <span className="hidden sm:inline">Yeni Sohbet</span>
+            </button>
+            <button 
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} 
+              className={cn(
+                "p-1.5 rounded-md transition-colors",
+                theme === 'dark' ? "hover:bg-[#2A2A2A] text-[#888]" : "hover:bg-gray-100 text-gray-500"
+              )}
+            >
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+            <button 
+              onClick={() => setShowSettings(true)} 
+              className={cn(
+                "p-1.5 rounded-md transition-colors",
+                theme === 'dark' ? "hover:bg-[#2A2A2A] text-[#888]" : "hover:bg-gray-100 text-gray-500"
+              )}
+            >
+              <Settings size={16} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          <div className="p-4 space-y-6">
+            {/* Connection Status */}
+            <section>
+              <div className="flex items-center justify-between mb-3 px-1">
+                <h3 className="text-[11px] font-bold text-[#555] uppercase tracking-wider">Server Status</h3>
+                <div className="flex items-center gap-1.5">
+                  <div className={cn(
+                    "w-1.5 h-1.5 rounded-full",
+                    connectionStatus === 'success' ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "bg-red-500"
+                  )} />
+                  <span className="text-[10px] font-medium text-[#777]">
+                    {connectionStatus === 'success' ? "OpenRouter Connected" : "OpenRouter Disconnected"}
+                  </span>
+                </div>
+              </div>
+              
+              <div className={cn(
+                "border rounded-lg p-3 space-y-3",
+                theme === 'dark' ? "bg-[#161616] border-[#222]" : "bg-gray-50 border-gray-200"
+              )}>
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className={theme === 'dark' ? "text-[#666]" : "text-gray-500"}>OpenRouter API</span>
+                  <button 
+                    onClick={connectOpenRouter}
+                    className="text-blue-500 hover:text-blue-400 font-medium"
+                  >
+                    {isConnecting ? "Connecting..." : (connectionStatus === 'success' ? "Refresh" : "Connect")}
+                  </button>
+                </div>
+                <input 
+                  type="password"
+                  placeholder="Enter API Key..."
+                  value={openRouterKey}
+                  onChange={(e) => setOpenRouterKey(e.target.value)}
+                  className={cn(
+                    "w-full border rounded p-2 text-xs focus:outline-none focus:border-blue-500/50 transition-colors",
+                    theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
+                  )}
+                />
+              </div>
+            </section>
+
+            {/* Model List */}
+            <section>
+              <h3 className="text-[11px] font-bold text-[#555] uppercase tracking-wider mb-3 px-1">Loaded Models</h3>
+              <div className="space-y-1">
+                {models.map((model, idx) => (
+                  <button
+                    key={model.id}
+                    onClick={() => setActiveModelId(model.id)}
+                    className={cn(
+                      "w-full flex flex-col p-3 rounded-lg transition-all border text-left group",
+                      activeModelId === model.id 
+                        ? (theme === 'dark' ? "bg-[#1E1E1E] border-[#333] shadow-lg" : "bg-white border-gray-300 shadow-md") 
+                        : (theme === 'dark' ? "bg-transparent border-transparent hover:bg-[#161616] hover:border-[#222]" : "bg-transparent border-transparent hover:bg-gray-100 hover:border-gray-200")
+                    )}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <div className={cn(
+                          "flex items-center justify-center rounded-full",
+                          model.status === 'active' && "text-blue-500 animate-pulse",
+                          model.status === 'idle' && "text-emerald-500",
+                          model.status === 'exhausted' && "text-amber-500",
+                          model.status === 'error' && "text-red-500"
+                        )}>
+                          {model.status === 'active' && <Activity size={10} />}
+                          {model.status === 'idle' && <CheckCircle2 size={10} />}
+                          {model.status === 'exhausted' && <AlertTriangle size={10} />}
+                          {model.status === 'error' && <XCircle size={10} />}
+                        </div>
+                        <span className={cn(
+                          "text-xs font-medium truncate",
+                          activeModelId === model.id 
+                            ? (theme === 'dark' ? "text-white" : "text-gray-900") 
+                            : (theme === 'dark' ? "text-[#999] group-hover:text-[#CCC]" : "text-gray-500 group-hover:text-gray-700")
+                        )}>
+                          {model.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn(
+                          "text-[8px] font-bold uppercase tracking-tighter px-1 rounded-[2px]",
+                          model.status === 'active' && "bg-blue-500/10 text-blue-500",
+                          model.status === 'idle' && "bg-emerald-500/10 text-emerald-500",
+                          model.status === 'exhausted' && "bg-amber-500/10 text-amber-500",
+                          model.status === 'error' && "bg-red-500/10 text-red-500"
+                        )}>
+                          {model.status}
+                        </span>
+                        <span className={cn(
+                          "text-[9px] font-mono",
+                          theme === 'dark' ? "text-[#444] group-hover:text-[#666]" : "text-gray-400 group-hover:text-gray-500"
+                        )}>Alt+{idx + 1}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className={cn(
+                        "truncate max-w-[140px] opacity-60",
+                        theme === 'dark' ? "text-[#555]" : "text-gray-400"
+                      )}>{model.id}</span>
+                      <span className={theme === 'dark' ? "text-[#555]" : "text-gray-400"}>{Math.round((model.quotaUsed / model.quotaLimit) * 100)}%</span>
+                    </div>
+                    <div className={cn(
+                      "mt-2 h-1 rounded-full overflow-hidden",
+                      theme === 'dark' ? "bg-[#111]" : "bg-gray-200"
+                    )}>
+                      <div 
+                        className={cn(
+                          "h-full transition-all duration-500",
+                          model.status === 'active' && "bg-blue-500",
+                          model.status === 'idle' && "bg-emerald-500",
+                          model.status === 'exhausted' && "bg-amber-500",
+                          model.status === 'error' && "bg-red-500"
+                        )}
+                        style={{ width: `${(model.quotaUsed / model.quotaLimit) * 100}%` }}
+                      />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {/* Stats */}
+            <section className={cn(
+              "pt-4 border-t",
+              theme === 'dark' ? "border-[#1E1E1E]" : "border-gray-100"
+            )}>
+              <div className={cn(
+                "rounded-lg p-3 space-y-2",
+                theme === 'dark' ? "bg-[#161616]" : "bg-gray-50"
+              )}>
+                <div className="flex justify-between text-[10px]">
+                  <span className={theme === 'dark' ? "text-[#666]" : "text-gray-400"}>TOKEN SPEED</span>
+                  <span className="text-emerald-500 font-mono">{tokenSpeed || '0.0'} t/s</span>
+                </div>
+                <div className="flex justify-between text-[10px]">
+                  <span className={theme === 'dark' ? "text-[#666]" : "text-gray-400"}>CONTEXT</span>
+                  <span className={cn("font-mono", theme === 'dark' ? "text-[#999]" : "text-gray-600")}>{messages.length} msgs</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div className={cn(
+          "p-4 border-t transition-colors duration-300 space-y-3",
+          theme === 'dark' ? "border-[#1E1E1E] bg-[#0B0B0B]" : "border-gray-100 bg-gray-50"
+        )}>
+          <div className="flex items-center justify-between text-[11px] text-[#555]">
+            <div className="flex items-center gap-2">
+              <Activity size={12} />
+              <span>System Health</span>
+            </div>
+            {(() => {
+              const hasError = models.some(m => m.status === 'error');
+              const allExhausted = models.length > 0 && models.every(m => m.status === 'exhausted' || m.status === 'error');
+              
+              if (allExhausted) return <span className="text-red-500 font-bold">CRITICAL</span>;
+              if (hasError) return <span className="text-amber-500 font-bold">DEGRADED</span>;
+              return <span className="text-emerald-500 font-bold">OPTIMAL</span>;
+            })()}
+          </div>
+
+          <button 
+            onClick={() => {
+              alert("Mac'e kurmak için:\n1. Safari'de bu sayfayı açın.\n2. 'Dosya' menüsünden 'Dock'a Ekle...' seçeneğini seçin.\n\nChrome kullanıyorsanız:\n1. Adres çubuğundaki 'Yükle' simgesine tıklayın.");
+            }}
+            className={cn(
+              "w-full py-2 rounded-lg border flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-wider transition-all",
+              theme === 'dark' 
+                ? "bg-[#161616] border-[#222] text-[#666] hover:text-blue-400 hover:border-blue-500/30" 
+                : "bg-white border-gray-200 text-gray-500 hover:text-blue-600 hover:border-blue-300 shadow-sm"
+            )}
+          >
+            <Layout size={12} />
+            <span>Mac'e Uygulama Olarak Kur</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className={cn(
+        "flex-1 flex flex-col relative overflow-hidden transition-colors duration-300",
+        theme === 'dark' ? "bg-[#0B0B0B]" : "bg-white"
+      )}>
+        {/* Header */}
+        <header className={cn(
+          "h-14 border-b flex items-center justify-between px-6 z-20 transition-colors duration-300",
+          theme === 'dark' 
+            ? "bg-[#0F0F0F]/95 border-[#1E1E1E] backdrop-blur supports-[backdrop-filter]:bg-[#0F0F0F]/60" 
+            : "bg-white/95 border-gray-100 backdrop-blur supports-[backdrop-filter]:bg-white/60"
+        )}>
+          <div className="flex items-center gap-4">
+            <div className={cn(
+              "flex items-center gap-2 px-3 py-1.5 border rounded-md transition-colors",
+              theme === 'dark' ? "bg-[#1A1A1A] border-[#2A2A2A]" : "bg-gray-50 border-gray-200"
+            )}>
+              {(() => {
+                const activeModel = models.find(m => m.id === activeModelId);
+                if (!activeModel) return <div className="w-2 h-2 bg-[#333] rounded-full" />;
+                return (
+                  <div className={cn(
+                    "flex items-center justify-center rounded-full",
+                    activeModel.status === 'active' && "text-blue-500 animate-pulse",
+                    activeModel.status === 'idle' && "text-emerald-500",
+                    activeModel.status === 'exhausted' && "text-amber-500",
+                    activeModel.status === 'error' && "text-red-500"
+                  )}>
+                    {activeModel.status === 'active' && <Activity size={12} />}
+                    {activeModel.status === 'idle' && <CheckCircle2 size={12} />}
+                    {activeModel.status === 'exhausted' && <AlertTriangle size={12} />}
+                    {activeModel.status === 'error' && <XCircle size={12} />}
+                  </div>
+                );
+              })()}
+              <span className={cn(
+                "text-xs font-semibold",
+                theme === 'dark' ? "text-[#CCC]" : "text-gray-700"
+              )}>
+                {models.find(m => m.id === activeModelId)?.name || "Select Model"}
+              </span>
+            </div>
+            <div className={cn("h-4 w-[1px]", theme === 'dark' ? "bg-[#222]" : "bg-gray-200")} />
+            <div className="flex items-center gap-2 text-[11px] text-[#666]">
+              <Activity size={12} />
+              <span>Routing: <span className={cn(routingStatus === 'stable' ? "text-emerald-500" : "text-amber-500")}>{routingStatus.toUpperCase()}</span></span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setMessages([])}
+              className={cn(
+                "p-2 rounded-md transition-colors hover:text-red-400",
+                theme === 'dark' ? "hover:bg-[#222] text-[#777]" : "hover:bg-gray-100 text-gray-400"
+              )}
+              title="Clear Chat"
+            >
+              <Trash2 size={16} />
+            </button>
+            <button 
+              onClick={() => setIsSmartRouting(!isSmartRouting)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
+                isSmartRouting 
+                  ? "bg-emerald-600/10 border-emerald-500/30 text-emerald-400" 
+                  : (theme === 'dark' ? "bg-[#1A1A1A] border-[#2A2A2A] text-[#888] hover:text-[#CCC] hover:border-[#333]" : "bg-gray-50 border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300")
+              )}
+              title="Automatic Model Switching"
+            >
+              <Zap size={14} />
+              <span>Smart Routing</span>
+            </button>
+            <button 
+              onClick={() => setShowSystemPrompt(!showSystemPrompt)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
+                showSystemPrompt 
+                  ? "bg-blue-600/10 border-blue-500/30 text-blue-400" 
+                  : (theme === 'dark' ? "bg-[#1A1A1A] border-[#2A2A2A] text-[#888] hover:text-[#CCC] hover:border-[#333]" : "bg-gray-50 border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300")
+              )}
+            >
+              <Layout size={14} />
+              <span>System Prompt</span>
+            </button>
+          </div>
+        </header>
+
+        {/* System Prompt Area */}
+        <AnimatePresence>
+          {showSystemPrompt && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className={cn(
+                "border-b overflow-hidden transition-colors duration-300",
+                theme === 'dark' ? "border-[#1E1E1E] bg-[#0F0F0F]" : "border-gray-100 bg-gray-50"
+              )}
+            >
+              <div className="p-4 max-w-4xl mx-auto">
+                <div className="flex items-center gap-2 mb-2 text-[11px] font-bold text-[#555] uppercase tracking-wider">
+                  <Command size={12} />
+                  <span>System Configuration</span>
+                </div>
+                <textarea
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  placeholder="Enter system instructions to guide the model's behavior..."
+                  className={cn(
+                    "w-full border rounded-lg p-3 text-sm focus:outline-none focus:border-blue-500/40 min-h-[100px] resize-none transition-colors",
+                    theme === 'dark' ? "bg-[#0B0B0B] border-[#222] text-[#AAA] placeholder:text-[#333]" : "bg-white border-gray-200 text-gray-700 placeholder:text-gray-300"
+                  )}
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Chat Area */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar scroll-smooth">
+          <div className="max-w-4xl mx-auto px-6 py-8 space-y-8">
+            {messages.length === 0 ? (
+              <div className="h-[60vh] flex flex-col items-center justify-center text-center space-y-4">
+                <div className={cn(
+                  "w-16 h-16 border rounded-2xl flex items-center justify-center text-blue-500 mb-2 shadow-xl",
+                  theme === 'dark' ? "bg-[#161616] border-[#222]" : "bg-blue-50 border-blue-100"
+                )}>
+                  <Bot size={32} />
+                </div>
+                <h2 className={cn(
+                  "text-xl font-bold tracking-tight",
+                  theme === 'dark' ? "text-white" : "text-gray-900"
+                )}>Free Router'a Hoş Geldiniz</h2>
+                <p className={cn(
+                  "max-w-sm text-sm leading-relaxed",
+                  theme === 'dark' ? "text-[#666]" : "text-gray-500"
+                )}>
+                  Tüm ücretsiz modelleri tek bir yerden yönetin. Akıllı yönlendirme ile kotalarınızı en verimli şekilde kullanın.
+                </p>
+                <div className="grid grid-cols-2 gap-3 pt-4">
+                  {['Explain quantum computing', 'Write a Python script', 'Summarize a text', 'Creative writing'].map(suggestion => (
+                    <button 
+                      key={suggestion}
+                      onClick={() => setInput(suggestion)}
+                      className={cn(
+                        "px-4 py-2 border rounded-lg text-xs transition-all text-left",
+                        theme === 'dark' 
+                          ? "bg-[#161616] border-[#222] text-[#888] hover:text-[#CCC] hover:border-[#333]" 
+                          : "bg-white border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300 shadow-sm"
+                      )}
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              messages.map((msg, idx) => (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  key={idx} 
+                  className={cn(
+                    "flex gap-4 group",
+                    msg.role === 'user' ? "flex-row-reverse" : "flex-row"
+                  )}
+                >
+                  <div className={cn(
+                    "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-1 border shadow-sm",
+                    msg.role === 'user' 
+                      ? "bg-blue-600 border-blue-500 text-white" 
+                      : (msg.role === 'system' 
+                          ? "bg-amber-600/20 border-amber-500/30 text-amber-500" 
+                          : (theme === 'dark' ? "bg-[#1A1A1A] border-[#2A2A2A] text-blue-500" : "bg-blue-50 border-blue-100 text-blue-600"))
+                  )}>
+                    {msg.role === 'user' ? <User size={16} /> : (msg.role === 'system' ? <Activity size={16} /> : <Bot size={16} />)}
+                  </div>
+                  
+                  <div className={cn(
+                    "flex flex-col max-w-[85%]",
+                    msg.role === 'user' ? "items-end" : "items-start"
+                  )}>
+                    <div className="flex items-center gap-2 mb-1 px-1">
+                      <span className={cn(
+                        "text-[10px] font-bold uppercase tracking-wider",
+                        theme === 'dark' ? "text-[#555]" : "text-gray-400"
+                      )}>
+                        {msg.role === 'user' ? "You" : (msg.role === 'system' ? "System" : "Assistant")}
+                      </span>
+                      <span className={cn(
+                        "text-[9px] font-mono",
+                        theme === 'dark' ? "text-[#333]" : "text-gray-300"
+                      )}>
+                        {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    
+                    <div className={cn(
+                      "p-4 rounded-2xl text-sm leading-relaxed relative shadow-sm",
+                      msg.role === 'user' 
+                        ? (theme === 'dark' ? "bg-[#1A1A1A] border border-[#2A2A2A] text-[#E0E0E0]" : "bg-blue-600 text-white border border-blue-500") 
+                        : (msg.role === 'system' 
+                            ? "bg-amber-500/5 border border-amber-500/10 text-amber-200/70 italic" 
+                            : (theme === 'dark' ? "bg-[#0F0F0F] border border-[#1E1E1E] text-[#CCC]" : "bg-gray-50 border border-gray-100 text-gray-800"))
+                    )}>
+                      <div className={cn(
+                        "markdown-body prose prose-sm max-w-none",
+                        (msg.role === 'user' && theme === 'light') ? "prose-invert" : (theme === 'dark' ? "prose-invert" : "")
+                      )}>
+                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      </div>
+                      
+                      {msg.role === 'assistant' && (
+                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                          <button 
+                            onClick={() => {
+                              navigator.clipboard.writeText(msg.content);
+                              setCopyStatus(idx);
+                              setTimeout(() => setCopyStatus(null), 2000);
+                            }}
+                            className={cn(
+                              "p-1.5 rounded transition-colors",
+                              theme === 'dark' ? "hover:bg-[#222] text-[#555] hover:text-[#AAA]" : "hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+                            )}
+                          >
+                            {copyStatus === idx ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              ))
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        {/* Error Display */}
+        <AnimatePresence>
+          {successMessage && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="absolute bottom-32 left-1/2 -translate-x-1/2 w-full max-w-xl px-6 z-30"
+            >
+              <div className={cn(
+                "border rounded-xl p-4 backdrop-blur-md flex items-start gap-3 shadow-2xl",
+                theme === 'dark' ? "bg-emerald-500/10 border-emerald-500/20" : "bg-emerald-50 border-emerald-200"
+              )}>
+                <div className={cn(
+                  "p-1.5 rounded-lg",
+                  theme === 'dark' ? "bg-emerald-500/20 text-emerald-500" : "bg-emerald-100 text-emerald-600"
+                )}>
+                  <ShieldCheck size={16} />
+                </div>
+                <div className="flex-1">
+                  <h4 className={cn(
+                    "text-xs font-bold uppercase tracking-wider mb-1",
+                    theme === 'dark' ? "text-emerald-400" : "text-emerald-700"
+                  )}>Sistem Mesajı</h4>
+                  <p className={cn(
+                    "text-xs leading-relaxed",
+                    theme === 'dark' ? "text-emerald-200/70" : "text-emerald-600"
+                  )}>{successMessage}</p>
+                </div>
+                <button onClick={() => setSuccessMessage(null)} className={cn(
+                  "transition-colors",
+                  theme === 'dark' ? "text-emerald-500/50 hover:text-emerald-500" : "text-emerald-400 hover:text-emerald-600"
+                )}>
+                  <X size={16} />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {error && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="absolute bottom-32 left-1/2 -translate-x-1/2 w-full max-w-xl px-6 z-30"
+            >
+              <div className={cn(
+                "border rounded-xl p-4 backdrop-blur-md flex items-start gap-3 shadow-2xl",
+                theme === 'dark' ? "bg-red-500/10 border-red-500/20" : "bg-red-50 border-red-200"
+              )}>
+                <div className={cn(
+                  "p-1.5 rounded-lg",
+                  theme === 'dark' ? "bg-red-500/20 text-red-500" : "bg-red-100 text-red-600"
+                )}>
+                  <Activity size={16} />
+                </div>
+                <div className="flex-1">
+                  <h4 className={cn(
+                    "text-xs font-bold uppercase tracking-wider mb-1",
+                    theme === 'dark' ? "text-red-400" : "text-red-700"
+                  )}>Hata</h4>
+                  <p className={cn(
+                    "text-xs leading-relaxed",
+                    theme === 'dark' ? "text-red-200/70" : "text-red-600"
+                  )}>{error}</p>
+                </div>
+                <button onClick={() => setError(null)} className={cn(
+                  "transition-colors",
+                  theme === 'dark' ? "text-red-500/50 hover:text-red-500" : "text-red-400 hover:text-red-600"
+                )}>
+                  <X size={16} />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Input Area */}
+        <div className={cn(
+          "p-6 border-t transition-colors duration-300",
+          theme === 'dark' ? "bg-[#0F0F0F] border-[#1E1E1E]" : "bg-white border-gray-100"
+        )}>
+          <div className="max-w-4xl mx-auto">
+            {attachedFile && (
+              <div className={cn(
+                "mb-3 flex items-center gap-2 p-2 rounded-lg w-fit border shadow-sm",
+                theme === 'dark' ? "bg-blue-500/5 border-blue-500/20 text-blue-400" : "bg-blue-50 border-blue-100 text-blue-600"
+              )}>
+                <Paperclip size={14} className="text-blue-500" />
+                <span className="text-xs font-medium truncate max-w-[200px]">{attachedFile.name}</span>
+                <button onClick={() => setAttachedFile(null)} className="p-1 hover:bg-blue-500/10 rounded transition-colors">
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+            
+            <div className={cn(
+              "relative flex items-end gap-3 border rounded-2xl p-2 transition-all shadow-xl",
+              theme === 'dark' 
+                ? "bg-[#161616] border-[#2A2A2A] focus-within:border-blue-500/50" 
+                : "bg-gray-50 border-gray-200 focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-500/5"
+            )}>
+              <div className="flex flex-col gap-1 pb-1 pl-1">
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className={cn(
+                    "p-2 rounded-xl transition-colors",
+                    theme === 'dark' ? "text-[#666] hover:text-blue-500 hover:bg-[#222]" : "text-gray-400 hover:text-blue-600 hover:bg-gray-200"
+                  )}
+                  title="Attach File"
+                >
+                  <Paperclip size={20} />
+                </button>
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  className="hidden" 
+                  onChange={(e) => setAttachedFile(e.target.files?.[0] || null)}
+                />
+              </div>
+
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder="Type your message... (Shift+Enter for new line)"
+                className={cn(
+                  "flex-1 bg-transparent border-none focus:ring-0 text-sm py-3 px-1 resize-none min-h-[44px] max-h-48 custom-scrollbar",
+                  theme === 'dark' ? "text-[#E0E0E0] placeholder:text-[#444]" : "text-gray-900 placeholder:text-gray-400"
+                )}
+                rows={1}
+              />
+
+              <div className="flex items-center gap-2 pb-1 pr-1">
+                <button 
+                  onClick={() => setIsRecording(!isRecording)}
+                  className={cn(
+                    "p-2 rounded-xl transition-all",
+                    isRecording 
+                      ? "bg-red-500 text-white animate-pulse" 
+                      : (theme === 'dark' ? "hover:bg-[#222] text-[#666] hover:text-emerald-500" : "hover:bg-gray-200 text-gray-400 hover:text-emerald-600")
+                  )}
+                  title="Voice Input"
+                >
+                  <Mic size={20} />
+                </button>
+                
+                <button
+                  onClick={handleSend}
+                  disabled={isLoading || (!input.trim() && !attachedFile)}
+                  className={cn(
+                    "p-2.5 rounded-xl transition-all flex items-center justify-center",
+                    isLoading || (!input.trim() && !attachedFile)
+                      ? (theme === 'dark' ? "bg-[#222] text-[#444]" : "bg-gray-200 text-gray-400")
+                      : "bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20"
+                  )}
+                >
+                  {isLoading ? <RefreshCw size={18} className="animate-spin" /> : <Send size={18} />}
+                </button>
+              </div>
+            </div>
+            
+            <div className="mt-3 flex items-center justify-between px-2">
+              <div className={cn(
+                "flex items-center gap-4 text-[10px] font-mono uppercase tracking-widest",
+                theme === 'dark' ? "text-[#444]" : "text-gray-400"
+              )}>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
+                  <span>{models.find(m => m.id === activeModelId)?.provider || "N/A"}</span>
+                </div>
+                <span>Context: {messages.length} / 50</span>
+              </div>
+              <p className={cn(
+                "text-[10px] font-mono uppercase tracking-widest",
+                theme === 'dark' ? "text-[#444]" : "text-gray-400"
+              )}>
+                Press <kbd className={cn(
+                  "px-1 rounded border",
+                  theme === 'dark' ? "bg-[#1A1A1A] border-[#2A2A2A]" : "bg-gray-100 border-gray-200"
+                )}>Enter</kbd> to send
+              </p>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* Settings Modal */}
+      <AnimatePresence>
+        {showSettings && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => setShowSettings(false)} 
+              className="absolute inset-0 bg-black/80 backdrop-blur-md" 
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 20 }} 
+              animate={{ scale: 1, opacity: 1, y: 0 }} 
+              exit={{ scale: 0.95, opacity: 0, y: 20 }} 
+              className="relative w-full max-w-2xl bg-[#0F0F0F] border border-[#1E1E1E] rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-[#1E1E1E] flex items-center justify-between bg-[#161616]">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-600/20 rounded-lg text-blue-500">
+                    <Settings size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg text-white">Model Configuration</h3>
+                    <p className="text-xs text-[#666]">Manage API keys and model availability</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-[#222] rounded-full transition-colors text-[#555] hover:text-white">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="p-6 space-y-6 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                {models.map(model => (
+                  <div key={model.id} className="space-y-3 p-4 border border-[#1E1E1E] rounded-xl bg-[#0B0B0B] hover:border-[#2A2A2A] transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[#888] uppercase tracking-wider">{model.provider}</span>
+                        <span className="text-sm font-medium text-[#CCC]">{model.name}</span>
+                      </div>
+                      <button 
+                        onClick={() => setModels(prev => prev.map(m => m.id === model.id ? { ...m, quotaUsed: 0, status: 'idle' } : m))} 
+                        className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase tracking-tighter"
+                      >
+                        Reset Quota
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="password"
+                        placeholder={model.provider === 'gemini' ? "System Configured" : `Enter ${model.name} API Key`}
+                        disabled={model.provider === 'gemini'}
+                        value={model.apiKey || ''}
+                        onChange={(e) => updateApiKey(model.id, e.target.value)}
+                        className="w-full bg-[#161616] border border-[#222] rounded-lg p-3 text-sm text-[#E0E0E0] focus:outline-none focus:border-blue-500/50 transition-all disabled:opacity-30 placeholder:text-[#333]"
+                      />
+                      {model.provider === 'gemini' && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          <ShieldCheck size={16} className="text-emerald-500/50" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              <div className="p-6 bg-[#161616] border-t border-[#1E1E1E] flex justify-end gap-3">
+                <button 
+                  onClick={() => setShowSettings(false)} 
+                  className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20"
+                >
+                  Save Configuration
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

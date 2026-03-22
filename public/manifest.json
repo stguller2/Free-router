@@ -1,0 +1,26 @@
+{
+  "name": "Free Router",
+  "short_name": "FreeRouter",
+  "description": "Ücretsiz yapay zeka modellerini tek bir arayüzden yönetin.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B0B0B",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "https://ais-dev.run.app/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "https://picsum.photos/seed/freerouter/192/192",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://picsum.photos/seed/freerouter/512/512",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}
