@@ -20,9 +20,18 @@ export interface Message {
   timestamp: number;
 }
 
-export interface AppState {
-  models: AIModel[];
-  activeModelId: string;
+export interface ChatSession {
+  id: string;
+  title: string;
   messages: Message[];
+  activeModelId: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AppState {
+  sessions: ChatSession[];
+  activeSessionId: string;
+  models: AIModel[];
   isSmartRouting: boolean;
 }

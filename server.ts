@@ -9,6 +9,17 @@ async function startServer() {
 
   app.use(express.json());
 
+  // CORS Middleware for local .app support
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
   // Endpoint to save memory.md
   app.post("/api/memory", async (req, res) => {
     const { content } = req.body;
@@ -25,6 +36,25 @@ async function startServer() {
     }
   });
 
+  // Endpoint to read memory.md
+  app.get("/api/memory", async (req, res) => {
+    try {
+      const memoryPath = path.join(process.cwd(), "memory.md");
+      try {
+        const content = await fs.readFile(memoryPath, "utf8");
+        res.json({ content });
+      } catch (err: any) {
+        if (err.code === 'ENOENT') {
+          return res.json({ content: "" });
+        }
+        throw err;
+      }
+    } catch (error: any) {
+      console.error("Error reading memory.md:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // API Proxy for AI Models
   app.post("/api/ai/proxy", async (req, res) => {
     const { provider, prompt, apiKey, modelName, history, systemInstruction } = req.body;
@@ -36,7 +66,7 @@ async function startServer() {
     // Helper to format history for different providers
     const formatHistory = (hist: any[]) => {
       return (hist || []).map(m => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
+        role: m.role === 'user' ? 'user' : (m.role === 'system' ? 'system' : 'assistant'),
         content: m.content
       }));
     };
@@ -66,6 +96,13 @@ async function startServer() {
       }
 
       if (provider === 'anthropic') {
+        // Anthropic expects system as a top-level field, not in messages
+        const anthropicMessages = commonMessages.filter(m => m.role !== 'system');
+        const systemMsg = commonMessages
+          .filter(m => m.role === 'system')
+          .map(m => m.content)
+          .join('\n\n');
+
         const response = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
@@ -76,7 +113,8 @@ async function startServer() {
           body: JSON.stringify({
             model: modelName || "claude-3-haiku-20240307",
             max_tokens: 1024,
-            messages: commonMessages,
+            system: systemMsg,
+            messages: anthropicMessages,
           }),
         });
         if (response.status === 429) return res.status(429).json({ error: "QUOTA_EXCEEDED" });
@@ -177,13 +215,23 @@ async function startServer() {
     try {
       console.log("Fetching OpenRouter models...");
       const response = await fetch("https://openrouter.ai/api/v1/models", {
-        headers: { "Authorization": `Bearer ${apiKey}` }
+        headers: { 
+          "Authorization": `Bearer ${apiKey}`,
+          "HTTP-Referer": process.env.APP_URL || "https://ais-dev.run.app",
+          "X-Title": "Free Router"
+        }
       });
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("OpenRouter API error:", response.status, errorText);
-        return res.status(response.status).json({ error: `OpenRouter API error: ${response.status}` });
+        let errorData;
+        try { errorData = JSON.parse(errorText); } catch(e) { errorData = { message: errorText }; }
+        
+        console.error("OpenRouter API error:", response.status, errorData);
+        return res.status(response.status).json({ 
+          error: `OpenRouter API Hatası (${response.status})`,
+          details: errorData.error?.message || errorData.message || "Bilinmeyen hata"
+        });
       }
 
       const data = await response.json();

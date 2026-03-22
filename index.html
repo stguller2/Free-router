@@ -5,13 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Free Router</title>
     <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="https://picsum.photos/seed/freerouter/512/512" />
     <meta name="theme-color" content="#0B0B0B" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Free Router" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="height: 100vh; background: #0B0B0B; display: flex; align-items: center; justify-content: center; color: #444; font-family: sans-serif;">
+        <div style="text-align: center;">
+          <div style="width: 40px; height: 40px; border: 2px solid #222; border-top-color: #2563eb; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px;"></div>
+          <p style="font-size: 12px; font-weight: bold; letter-spacing: 0.1em; margin: 0;">FREE ROUTER</p>
+          <p style="font-size: 10px; opacity: 0.5; margin-top: 8px;">Uygulama başlatılıyor...</p>
+          <noscript>
+            <p style="color: #ef4444; font-size: 10px; margin-top: 10px;">Lütfen JavaScript'i etkinleştirin.</p>
+          </noscript>
+        </div>
+      </div>
+      <style>
+        @keyframes spin { to { transform: rotate(360deg); } }
+      </style>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

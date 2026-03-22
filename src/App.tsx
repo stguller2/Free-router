@@ -27,14 +27,15 @@ import {
   Check,
   Sun,
   Moon,
-  Plus
+  Plus,
+  Database
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { AIService } from './services/aiService';
-import { AIModel, Message } from './types';
+import { AIModel, Message, ChatSession } from './types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -54,6 +55,26 @@ const INITIAL_MODELS: AIModel[] = [
   { id: 'huggingfaceh4/zephyr-7b-beta:free', name: 'Zephyr 7B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle' },
 ];
 
+const createNewSession = (modelId: string = 'gemini-flash'): ChatSession => ({
+  id: `session-${Date.now()}`,
+  title: 'Yeni Sohbet',
+  messages: [],
+  activeModelId: modelId,
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
+
+const DEFAULT_SYSTEM_PROMPT = `Sen "Free Router" ekosisteminin bir parçası olan, çoklu model desteğine ve uzun süreli hafızaya sahip gelişmiş bir yapay zeka asistanısın.
+
+TEMEL KURALLAR VE YETENEKLER:
+1. HAFIZA YÖNETİMİ: Sana sunulan "[UZUN SÜRELİ HAFIZA (memory.md)]" bölümündeki bilgileri dikkatle incele. Kullanıcı farklı bir sohbette olsa bile, oradaki geçmiş bilgileri (isim, tercihler, önceki konular) kullanarak tutarlı bir deneyim sun.
+2. MODEL FARKINDALIĞI: Sen birçok farklı modelden (Gemini, GPT, Claude, Llama vb.) biri olabilirsin. Eğer bir model hata verirse sistem seni otomatik olarak devreye almış olabilir. Kullanıcıya nerede kaldığını hissettirmeden akıcı bir şekilde yardımcı ol.
+3. DOSYA ANALİZİ: Kullanıcı PDF, resim veya metin dosyası yüklediğinde, bu içeriği en öncelikli bilgi kaynağı olarak kabul et ve derinlemesine analiz yap.
+4. ÜSLUP: Profesyonel, yardımsever ve çözüm odaklı ol. Cevaplarını Markdown formatında, okunaklı ve yapılandırılmış bir şekilde sun.
+5. DİL: Kullanıcı aksini belirtmedikçe her zaman Türkçe cevap ver.
+
+Kullanıcının şu anki isteğine, hem mevcut sohbet geçmişini hem de uzun süreli hafızayı sentezleyerek en doğru yanıtı ver.`;
+
 export default function App() {
   const [models, setModels] = useState<AIModel[]>(() => {
     const saved = localStorage.getItem('ai_hub_models');
@@ -63,8 +84,26 @@ export default function App() {
     return INITIAL_MODELS;
   });
 
-  const [activeModelId, setActiveModelId] = useState('gemini-flash');
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
+    const saved = localStorage.getItem('ai_hub_sessions');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+    return [createNewSession()];
+  });
+
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => {
+    const saved = localStorage.getItem('ai_hub_active_session_id');
+    if (saved && sessions.some(s => s.id === saved)) {
+      return saved;
+    }
+    return sessions[0]?.id || '';
+  });
+
+  const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
+  const messages = activeSession?.messages || [];
+  const activeModelId = activeSession?.activeModelId || 'gemini-flash';
+
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSmartRouting, setIsSmartRouting] = useState(true);
@@ -73,7 +112,7 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [routingStatus, setRoutingStatus] = useState<'stable' | 'routing' | 'exhausted'>('stable');
   const [openRouterKey, setOpenRouterKey] = useState(() => localStorage.getItem('openrouter_key') || '');
-  const [systemPrompt, setSystemPrompt] = useState('Sen yardımcı bir yapay zeka asistanısın.');
+  const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem('ai_hub_system_prompt') || DEFAULT_SYSTEM_PROMPT);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -90,7 +129,10 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem('ai_hub_models', JSON.stringify(models));
+    localStorage.setItem('ai_hub_sessions', JSON.stringify(sessions));
+    localStorage.setItem('ai_hub_active_session_id', activeSessionId);
     localStorage.setItem('openrouter_key', openRouterKey);
+    localStorage.setItem('ai_hub_system_prompt', systemPrompt);
     localStorage.setItem('theme', theme);
     
     if (theme === 'dark') {
@@ -98,7 +140,59 @@ export default function App() {
     } else {
       document.documentElement.classList.remove('dark');
     }
-  }, [models, openRouterKey, theme]);
+  }, [models, sessions, activeSessionId, openRouterKey, theme]);
+
+  const updateActiveSession = (updates: Partial<ChatSession>) => {
+    setSessions(prev => prev.map(s => 
+      s.id === activeSessionId ? { ...s, ...updates, updatedAt: Date.now() } : s
+    ));
+  };
+
+  const setMessages = (newMessages: Message[] | ((prev: Message[]) => Message[])) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === activeSessionId) {
+        const messages = typeof newMessages === 'function' ? newMessages(s.messages) : newMessages;
+        
+        // Auto-generate title if it's the first user message
+        let title = s.title;
+        if (title === 'Yeni Sohbet' && messages.length > 0) {
+          const firstUserMsg = messages.find(m => m.role === 'user');
+          if (firstUserMsg) {
+            title = firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? '...' : '');
+          }
+        }
+
+        return { ...s, messages, title, updatedAt: Date.now() };
+      }
+      return s;
+    }));
+  };
+
+  const setActiveModelId = (modelId: string) => {
+    updateActiveSession({ activeModelId: modelId });
+  };
+
+  const handleNewChat = () => {
+    const newSession = createNewSession(activeModelId);
+    setSessions(prev => [newSession, ...prev]);
+    setActiveSessionId(newSession.id);
+    inputRef.current?.focus();
+  };
+
+  const handleDeleteChat = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const filtered = sessions.filter(s => s.id !== id);
+    if (filtered.length === 0) {
+      const newSession = createNewSession(activeModelId);
+      setSessions([newSession]);
+      setActiveSessionId(newSession.id);
+      return;
+    }
+    setSessions(filtered);
+    if (activeSessionId === id) {
+      setActiveSessionId(filtered[0].id);
+    }
+  };
 
   // Save conversation to memory.md whenever messages change
   useEffect(() => {
@@ -208,7 +302,13 @@ export default function App() {
     } catch (err: any) {
       setConnectionStatus('error');
       console.error("Connection error:", err);
-      setError("OpenRouter bağlantısı başarısız: " + (err.message || "Bilinmeyen hata"));
+      let msg = "OpenRouter bağlantısı başarısız: ";
+      if (err.message === "Failed to fetch") {
+        msg += "Sunucuya ulaşılamıyor. Lütfen internet bağlantınızı kontrol edin.";
+      } else {
+        msg += err.message || "Bilinmeyen hata";
+      }
+      setError(msg);
     } finally {
       setIsConnecting(false);
     }
@@ -270,31 +370,44 @@ export default function App() {
       await attemptAIRequest(finalPrompt, activeModelId, currentHistory, attachments);
     } catch (err: any) {
       if (isSmartRouting) {
-        const currentModel = models.find(m => m.id === activeModelId);
         setRoutingStatus('routing');
-        setModels(prev => prev.map(m => m.id === activeModelId ? { ...m, status: 'exhausted' } : m));
+        let currentFailedModelId = activeModelId;
+        let lastError = err;
+        let success = false;
 
-        const nextModel = findNextAvailableModel(activeModelId);
-        if (nextModel) {
-          const reason = err.message === 'QUOTA_EXCEEDED' ? "kotası doldu" : "bağlantı hatası verdi";
+        // Try to find and use next models until success or exhaustion
+        while (true) {
+          setModels(prev => prev.map(m => m.id === currentFailedModelId ? { ...m, status: 'exhausted' } : m));
+          const currentModel = models.find(m => m.id === currentFailedModelId);
+          const nextModel = findNextAvailableModel(currentFailedModelId);
+
+          if (!nextModel) {
+            setRoutingStatus('exhausted');
+            setError("Kullanılabilir başka model bulunamadı veya tüm modeller başarısız oldu.");
+            break;
+          }
+
+          const reason = lastError.message === 'QUOTA_EXCEEDED' ? "kotası doldu" : "bağlantı hatası verdi";
           const systemMsg: Message = {
             id: `sys-${Date.now()}`,
             role: 'system',
             content: `🔄 ${currentModel?.name || 'Model'} ${reason}. Otomatik olarak ${nextModel.name} modeline geçiliyor...`,
             timestamp: Date.now(),
           };
+          
           setMessages(prev => [...prev, systemMsg]);
           setActiveModelId(nextModel.id);
+          
           try {
             await attemptAIRequest(finalPrompt, nextModel.id, currentHistory, attachments);
             setRoutingStatus('stable');
+            success = true;
+            break;
           } catch (retryErr: any) {
-            setRoutingStatus('exhausted');
-            setError("Tüm denemeler başarısız oldu. Lütfen internet bağlantınızı veya API anahtarlarınızı kontrol edin.");
+            currentFailedModelId = nextModel.id;
+            lastError = retryErr;
+            // Continue loop to try next model
           }
-        } else {
-          setRoutingStatus('exhausted');
-          setError("Kullanılabilir başka model bulunamadı.");
         }
       } else {
         setError(err.message || "Bir hata oluştu.");
@@ -314,23 +427,39 @@ export default function App() {
 
     setModels(prev => prev.map(m => m.id === modelId ? { ...m, status: 'active' } : m));
 
+    // Fetch memory.md to provide long-term context
+    let memoryContext = "";
+    try {
+      const memRes = await fetch('/api/memory');
+      if (memRes.ok) {
+        const memData = await memRes.json();
+        if (memData.content) {
+          memoryContext = `\n\n[UZUN SÜRELİ HAFIZA (memory.md)]:\n${memData.content.slice(-4000)}\n(Not: Yukarıdaki hafıza geçmiş konuşmaları içerir.)`;
+        }
+      }
+    } catch (e) {
+      console.warn("Memory context could not be loaded", e);
+    }
+
+    const finalSystemPrompt = `${systemPrompt}${memoryContext}`;
+
     const startTime = Date.now();
     let responseText = "";
     try {
       if (model.provider === 'gemini') {
-        responseText = await AIService.callGemini(prompt, history, systemPrompt, attachments);
+        responseText = await AIService.callGemini(prompt, history, finalSystemPrompt, attachments);
       } else if (model.provider === 'openrouter' && model.apiKey) {
-        responseText = await AIService.callOpenRouter(prompt, model.apiKey, model.id, history, systemPrompt);
+        responseText = await AIService.callOpenRouter(prompt, model.apiKey, model.id, history, finalSystemPrompt);
       } else if (model.provider === 'openai' && model.apiKey) {
-        responseText = await AIService.callOpenAI(prompt, model.apiKey, history, systemPrompt);
+        responseText = await AIService.callOpenAI(prompt, model.apiKey, history, finalSystemPrompt);
       } else if (model.provider === 'anthropic' && model.apiKey) {
-        responseText = await AIService.callAnthropic(prompt, model.apiKey, history, systemPrompt);
+        responseText = await AIService.callAnthropic(prompt, model.apiKey, history, finalSystemPrompt);
       } else if (model.provider === 'deepseek' && model.apiKey) {
-        responseText = await AIService.callDeepSeek(prompt, model.apiKey, history, systemPrompt);
+        responseText = await AIService.callDeepSeek(prompt, model.apiKey, history, finalSystemPrompt);
       } else if (model.provider === 'groq' && model.apiKey) {
-        responseText = await AIService.callGroq(prompt, model.apiKey, history, systemPrompt);
+        responseText = await AIService.callGroq(prompt, model.apiKey, history, finalSystemPrompt);
       } else if (model.provider === 'mistral' && model.apiKey) {
-        responseText = await AIService.callMistral(prompt, model.apiKey, history, systemPrompt);
+        responseText = await AIService.callMistral(prompt, model.apiKey, history, finalSystemPrompt);
       } else {
         throw new Error("API anahtarı eksik.");
       }
@@ -388,13 +517,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-1">
             <button 
-              onClick={() => {
-                if (window.confirm("Tüm konuşma geçmişi silinecek. Emin misiniz?")) {
-                  setMessages([]);
-                  setSuccessMessage("Yeni sohbet başlatıldı.");
-                  setTimeout(() => setSuccessMessage(null), 3000);
-                }
-              }}
+              onClick={handleNewChat}
               className={cn(
                 "p-1.5 rounded-md transition-colors flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider",
                 theme === 'dark' ? "hover:bg-[#2A2A2A] text-[#888] hover:text-blue-400" : "hover:bg-gray-100 text-gray-500 hover:text-blue-600"
@@ -465,6 +588,68 @@ export default function App() {
                     theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
                   )}
                 />
+              </div>
+            </section>
+
+            {/* Chat History */}
+            <section>
+              <div className="flex items-center justify-between mb-3 px-1">
+                <h3 className="text-[11px] font-bold text-[#555] uppercase tracking-wider">Sohbet Geçmişi</h3>
+                <div className="flex items-center gap-1">
+                  <button 
+                    onClick={() => {
+                      if (window.confirm("Tüm sohbet geçmişi silinecek. Emin misiniz?")) {
+                        setSessions([createNewSession(activeModelId)]);
+                        setActiveSessionId(sessions[0].id);
+                      }
+                    }}
+                    className={cn(
+                      "p-1 rounded-md transition-colors",
+                      theme === 'dark' ? "hover:bg-[#1E1E1E] text-[#444] hover:text-red-400" : "hover:bg-gray-100 text-gray-400 hover:text-red-500"
+                    )}
+                    title="Tümünü Temizle"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                  <button 
+                    onClick={handleNewChat}
+                    className={cn(
+                      "p-1 rounded-md transition-colors",
+                      theme === 'dark' ? "hover:bg-[#1E1E1E] text-[#666] hover:text-blue-400" : "hover:bg-gray-100 text-gray-400 hover:text-blue-500"
+                    )}
+                    title="Yeni Sohbet"
+                  >
+                    <Plus size={12} />
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1 max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
+                {sessions.map(session => (
+                  <div
+                    key={session.id}
+                    onClick={() => setActiveSessionId(session.id)}
+                    className={cn(
+                      "group flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all border",
+                      activeSessionId === session.id
+                        ? (theme === 'dark' ? "bg-[#1E1E1E] border-[#333] text-white" : "bg-white border-gray-200 text-blue-600 shadow-sm")
+                        : (theme === 'dark' ? "bg-transparent border-transparent text-[#666] hover:bg-[#161616] hover:text-[#999]" : "bg-transparent border-transparent text-gray-500 hover:bg-gray-50")
+                    )}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <MessageSquare size={12} className="shrink-0" />
+                      <span className="text-[10px] truncate font-medium">{session.title}</span>
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteChat(session.id, e)}
+                      className={cn(
+                        "p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity",
+                        theme === 'dark' ? "hover:bg-[#252525] text-[#444]" : "hover:bg-gray-200 text-gray-400"
+                      )}
+                    >
+                      <Trash2 size={10} />
+                    </button>
+                  </div>
+                ))}
               </div>
             </section>
 
@@ -950,7 +1135,7 @@ export default function App() {
                 ? "bg-[#161616] border-[#2A2A2A] focus-within:border-blue-500/50" 
                 : "bg-gray-50 border-gray-200 focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-500/5"
             )}>
-              <div className="flex flex-col gap-1 pb-1 pl-1">
+              <div className="flex flex-col gap-1 pb-1 pl-1 items-center">
                 <button 
                   onClick={() => fileInputRef.current?.click()}
                   className={cn(
@@ -961,6 +1146,13 @@ export default function App() {
                 >
                   <Paperclip size={20} />
                 </button>
+                <div className={cn(
+                  "flex items-center gap-1 px-1 py-0.5 rounded text-[8px] font-bold uppercase tracking-tighter opacity-30",
+                  theme === 'dark' ? "text-[#555]" : "text-gray-400"
+                )} title="memory.md aktif">
+                  <Database size={8} />
+                  <span className="hidden sm:inline">MEM</span>
+                </div>
                 <input 
                   type="file" 
                   ref={fileInputRef} 

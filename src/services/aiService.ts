@@ -94,7 +94,12 @@ export class AIService {
     const response = await fetch("/api/ai/openrouter/models", {
       headers: { "Authorization": `Bearer ${apiKey}` }
     });
-    if (!response.ok) throw new Error("Failed to fetch OpenRouter models");
+    
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.details || data.error || "OpenRouter modelleri yüklenemedi.");
+    }
+    
     return response.json();
   }
 
