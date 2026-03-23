@@ -43,17 +43,17 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const INITIAL_MODELS: AIModel[] = [
-  { id: 'gemini-flash', name: 'Gemini 3 Flash', provider: 'gemini', quotaLimit: 15, quotaUsed: 0, isAvailable: true, status: 'idle' },
-  { id: 'gpt-3.5', name: 'ChatGPT 3.5', provider: 'openai', quotaLimit: 10, quotaUsed: 0, isAvailable: false, status: 'idle' },
-  { id: 'claude-haiku', name: 'Claude 3 Haiku', provider: 'anthropic', quotaLimit: 5, quotaUsed: 0, isAvailable: false, status: 'idle' },
-  { id: 'deepseek-chat', name: 'DeepSeek Chat', provider: 'deepseek', quotaLimit: 10, quotaUsed: 0, isAvailable: false, status: 'idle' },
-  { id: 'groq-llama', name: 'Groq Llama 3', provider: 'groq', quotaLimit: 20, quotaUsed: 0, isAvailable: false, status: 'idle' },
-  { id: 'mistral-tiny', name: 'Mistral Tiny', provider: 'mistral', quotaLimit: 10, quotaUsed: 0, isAvailable: false, status: 'idle' },
+  { id: 'gemini-flash', name: 'Gemini 3 Flash', provider: 'gemini', quotaLimit: 15, quotaUsed: 0, isAvailable: true, status: 'idle', tier: 3 },
+  { id: 'gpt-3.5', name: 'ChatGPT 3.5', provider: 'openai', quotaLimit: 10, quotaUsed: 0, isAvailable: false, status: 'idle', tier: 2 },
+  { id: 'claude-haiku', name: 'Claude 3 Haiku', provider: 'anthropic', quotaLimit: 5, quotaUsed: 0, isAvailable: false, status: 'idle', tier: 2 },
+  { id: 'deepseek-chat', name: 'DeepSeek Chat', provider: 'deepseek', quotaLimit: 10, quotaUsed: 0, isAvailable: false, status: 'idle', tier: 3 },
+  { id: 'groq-llama', name: 'Groq Llama 3', provider: 'groq', quotaLimit: 20, quotaUsed: 0, isAvailable: false, status: 'idle', tier: 3 },
+  { id: 'mistral-tiny', name: 'Mistral Tiny', provider: 'mistral', quotaLimit: 10, quotaUsed: 0, isAvailable: false, status: 'idle', tier: 1 },
   // OpenRouter Free Tier Models (v1)
-  { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle' },
-  { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle' },
-  { id: 'meta-llama/llama-3-8b-instruct:free', name: 'Llama 3 8B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle' },
-  { id: 'huggingfaceh4/zephyr-7b-beta:free', name: 'Zephyr 7B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle' },
+  { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle', tier: 2 },
+  { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle', tier: 1 },
+  { id: 'meta-llama/llama-3-8b-instruct:free', name: 'Llama 3 8B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle', tier: 2 },
+  { id: 'huggingfaceh4/zephyr-7b-beta:free', name: 'Zephyr 7B (Free)', provider: 'openrouter', quotaLimit: 50, quotaUsed: 0, isAvailable: false, status: 'idle', tier: 1 },
 ];
 
 const createNewSession = (modelId: string = 'gemini-flash'): ChatSession => ({
@@ -75,6 +75,29 @@ TEMEL KURALLAR VE YETENEKLER:
 5. DİL: Kullanıcı aksini belirtmedikçe her zaman Türkçe cevap ver.
 
 Kullanıcının şu anki isteğine, hem mevcut sohbet geçmişini hem de uzun süreli hafızayı sentezleyerek en doğru yanıtı ver.`;
+
+const ROUTING_RULES = [
+  {
+    category: 'Coding & Technical',
+    keywords: ['kod', 'python', 'javascript', 'html', 'css', 'react', 'sql', 'program', 'debug', 'error', 'api', 'json', 'typescript', 'java', 'c++', 'rust', 'go', 'backend', 'frontend', 'developer'],
+    targets: ['claude-3-5-sonnet', 'qwen', 'deepseek', 'codestral']
+  },
+  {
+    category: 'Logic & Analysis',
+    keywords: ['analiz', 'mantık', 'neden', 'ispat', 'felsefe', 'karmaşık', 'strateji', 'matematik', 'denklem', 'problem', 'çözüm', 'kanıt', 'teorem', 'olasılık', 'istatistik'],
+    targets: ['405b', 'gpt-4o', 'llama-3.1', 'pro']
+  },
+  {
+    category: 'Creative Writing',
+    keywords: ['hikaye', 'yaratıcı', 'şiir', 'senaryo', 'kurgu', 'roman', 'edebiyat', 'masal', 'diyalog', 'karakter', 'betimleme', 'anlatı'],
+    targets: ['zephyr', 'claude', 'mistral']
+  },
+  {
+    category: 'Summary & Fast Chat',
+    keywords: ['özet', 'kısaca', 'liste', 'maddeler', 'çeviri', 'tercüme', 'anlamı', 'nedir', 'kimdir'],
+    targets: ['flash', 'mini', '7b', '8b']
+  }
+];
 
 export default function App() {
   const [models, setModels] = useState<AIModel[]>(() => {
@@ -115,6 +138,8 @@ export default function App() {
   const [openRouterKey, setOpenRouterKey] = useState(() => localStorage.getItem('openrouter_key') || '');
   const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem('ai_hub_system_prompt') || DEFAULT_SYSTEM_PROMPT);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const [showModelGuide, setShowModelGuide] = useState(false);
+  const [isSystemPromptSaved, setIsSystemPromptSaved] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [isRecording, setIsRecording] = useState(false);
@@ -186,6 +211,16 @@ export default function App() {
     updateActiveSession({ activeModelId: modelId });
   };
 
+  const handleSaveSystemPrompt = () => {
+    localStorage.setItem('ai_hub_system_prompt', systemPrompt);
+    setIsSystemPromptSaved(true);
+    setSuccessMessage("Sistem talimatları başarıyla kaydedildi.");
+    setTimeout(() => {
+      setIsSystemPromptSaved(false);
+      setSuccessMessage(null);
+    }, 3000);
+  };
+
   const handleNewChat = () => {
     const newSession = createNewSession(activeModelId);
     setSessions(prev => [newSession, ...prev]);
@@ -250,8 +285,9 @@ export default function App() {
       // Alt + 1-9 to switch models
       if (e.altKey && e.key >= '1' && e.key <= '9') {
         const index = parseInt(e.key) - 1;
-        if (models[index]) {
-          const targetModel = models[index];
+        const sortedModels = [...models].sort((a, b) => b.tier - a.tier);
+        if (sortedModels[index]) {
+          const targetModel = sortedModels[index];
           setActiveModelId(targetModel.id);
           const systemMsg: Message = {
             id: `sys-manual-${Date.now()}`,
@@ -276,6 +312,15 @@ export default function App() {
 
   const activeModel = models.find(m => m.id === activeModelId) || models[0];
 
+  const getModelTier = (modelId: string): number => {
+    const id = modelId.toLowerCase();
+    if (id.includes('405b') || id.includes('gpt-4o') || id.includes('claude-3-5-sonnet')) return 5;
+    if (id.includes('72b') || id.includes('pro') || id.includes('llama-3.1')) return 4;
+    if (id.includes('flash') || id.includes('70b') || id.includes('mini')) return 3;
+    if (id.includes('8b') || id.includes('9b') || id.includes('nemo')) return 2;
+    return 1;
+  };
+
   const connectOpenRouter = async () => {
     console.log("Connect button clicked, key length:", openRouterKey.length);
     if (!openRouterKey.trim()) return;
@@ -295,7 +340,8 @@ export default function App() {
         quotaUsed: 0,
         isAvailable: true,
         apiKey: openRouterKey,
-        status: 'idle'
+        status: 'idle',
+        tier: getModelTier(m.id)
       }));
 
       // Keep existing non-openrouter models and add new ones
@@ -329,12 +375,34 @@ export default function App() {
   };
 
   const findNextAvailableModel = (excludeIds: string[]) => {
-    return modelsRef.current.find(m => 
-      !excludeIds.includes(m.id) && 
-      m.isAvailable && 
-      m.status !== 'exhausted' && 
-      m.quotaUsed < m.quotaLimit
-    );
+    return [...modelsRef.current]
+      .filter(m => 
+        !excludeIds.includes(m.id) && 
+        m.isAvailable && 
+        m.status !== 'exhausted' && 
+        m.quotaUsed < m.quotaLimit
+      )
+      .sort((a, b) => b.tier - a.tier)[0];
+  };
+
+  const routePrompt = (prompt: string): string | null => {
+    const p = prompt.toLowerCase();
+    
+    for (const rule of ROUTING_RULES) {
+      if (rule.keywords.some(keyword => p.includes(keyword))) {
+        const availableTargets = modelsRef.current.filter(m => 
+          rule.targets.some(target => m.id.toLowerCase().includes(target)) && 
+          m.status !== 'exhausted' && m.quotaUsed < m.quotaLimit
+        );
+        
+        if (availableTargets.length > 0) {
+          // Return the strongest available model for this category
+          return availableTargets.sort((a, b) => b.tier - a.tier)[0].id;
+        }
+      }
+    }
+
+    return null;
   };
 
   const handleSend = async () => {
@@ -388,7 +456,30 @@ export default function App() {
       setInput('');
       setAttachedFile(null);
 
-      await attemptAIRequest(finalPrompt, activeModelId, currentHistory, attachments, abortControllerRef.current?.signal);
+      let targetModelId = activeModelId;
+      
+      // Proactive Routing: If smart routing is on, try to pick the best model for the task
+      // Only run proactive routing for the FIRST message of a session to maintain context stability
+      if (isSmartRouting && currentHistory.length === 0) {
+        const suggestedModelId = routePrompt(finalPrompt);
+        if (suggestedModelId && suggestedModelId !== activeModelId) {
+          const suggestedModel = modelsRef.current.find(m => m.id === suggestedModelId);
+          if (suggestedModel) {
+            setRoutingStatus('routing');
+            const routeMsg: Message = {
+              id: `route-${Date.now()}`,
+              role: 'system',
+              content: `🎯 İstek analizi yapıldı. Bu görev için en uygun model olan **${suggestedModel.name}** seçiliyor...`,
+              timestamp: Date.now(),
+            };
+            setMessages(prev => [...prev, routeMsg]);
+            setActiveModelId(suggestedModelId);
+            targetModelId = suggestedModelId;
+          }
+        }
+      }
+
+      await attemptAIRequest(finalPrompt, targetModelId, currentHistory, attachments, abortControllerRef.current?.signal);
     } catch (err: any) {
       if (err.message === 'ABORTED') {
         setIsLoading(false);
@@ -805,7 +896,7 @@ export default function App() {
             <section>
               <h3 className="text-[11px] font-bold text-[#555] uppercase tracking-wider mb-3 px-1">Loaded Models</h3>
               <div className="space-y-1">
-                {models.map((model, idx) => (
+                {[...models].sort((a, b) => b.tier - a.tier).map((model, idx) => (
                   <button
                     key={model.id}
                     onClick={() => setActiveModelId(model.id)}
@@ -837,6 +928,14 @@ export default function App() {
                             : (theme === 'dark' ? "text-[#999] group-hover:text-[#CCC]" : "text-gray-500 group-hover:text-gray-700")
                         )}>
                           {model.name}
+                        </span>
+                        <span className={cn(
+                          "text-[8px] font-bold px-1 rounded-[2px]",
+                          model.tier >= 4 ? "bg-purple-500/10 text-purple-500" : 
+                          model.tier >= 3 ? "bg-blue-500/10 text-blue-500" : 
+                          "bg-gray-500/10 text-gray-500"
+                        )}>
+                          T{model.tier}
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5">
@@ -1025,6 +1124,16 @@ export default function App() {
               <Layout size={14} />
               <span>System Prompt</span>
             </button>
+            <button 
+              onClick={() => setShowModelGuide(true)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
+                theme === 'dark' ? "bg-[#1A1A1A] border-[#2A2A2A] text-[#888] hover:text-[#CCC] hover:border-[#333]" : "bg-gray-50 border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              )}
+            >
+              <Bot size={14} />
+              <span>Model Rehberi</span>
+            </button>
           </div>
         </header>
 
@@ -1041,13 +1150,30 @@ export default function App() {
               )}
             >
               <div className="p-4 max-w-4xl mx-auto">
-                <div className="flex items-center gap-2 mb-2 text-[11px] font-bold text-[#555] uppercase tracking-wider">
-                  <Command size={12} />
-                  <span>System Configuration</span>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 text-[11px] font-bold text-[#555] uppercase tracking-wider">
+                    <Command size={12} />
+                    <span>System Configuration</span>
+                  </div>
+                  <button 
+                    onClick={handleSaveSystemPrompt}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all",
+                      isSystemPromptSaved 
+                        ? "bg-emerald-500 text-white" 
+                        : (theme === 'dark' ? "bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 border border-blue-500/20" : "bg-blue-600 text-white hover:bg-blue-700 shadow-sm")
+                    )}
+                  >
+                    {isSystemPromptSaved ? <Check size={10} /> : <Copy size={10} />}
+                    {isSystemPromptSaved ? "Kaydedildi" : "Kaydet"}
+                  </button>
                 </div>
                 <textarea
                   value={systemPrompt}
-                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  onChange={(e) => {
+                    setSystemPrompt(e.target.value);
+                    setIsSystemPromptSaved(false);
+                  }}
                   placeholder="Enter system instructions to guide the model's behavior..."
                   className={cn(
                     "w-full border rounded-lg p-3 text-sm focus:outline-none focus:border-blue-500/40 min-h-[100px] resize-none transition-colors",
@@ -1180,6 +1306,115 @@ export default function App() {
         </div>
 
         {/* Error Display */}
+        <AnimatePresence>
+          {showModelGuide && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className={cn(
+                  "w-full max-w-2xl max-h-[80vh] overflow-hidden rounded-2xl shadow-2xl border flex flex-col",
+                  theme === 'dark' ? "bg-[#0F0F0F] border-[#1E1E1E]" : "bg-white border-gray-100"
+                )}
+              >
+                <div className="p-6 border-b flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-500/10 rounded-lg text-blue-500">
+                      <Bot size={20} />
+                    </div>
+                    <div>
+                      <h2 className={cn("text-lg font-bold", theme === 'dark' ? "text-white" : "text-gray-900")}>Model Yetenek Rehberi</h2>
+                      <p className="text-xs text-[#666]">İhtiyacınıza en uygun modeli seçin</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowModelGuide(false)}
+                    className={cn("p-2 rounded-full transition-colors", theme === 'dark' ? "hover:bg-[#1E1E1E] text-[#444]" : "hover:bg-gray-100 text-gray-400")}
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {[
+                      {
+                        name: "Gemini 2.0 Flash",
+                        desc: "Google'ın en yeni ve en hızlı modeli. Multimodal (resim/video/ses) desteği ve geniş bağlam penceresi ile genel kullanım için mükemmeldir.",
+                        tags: ["Hız", "Multimodal", "Geniş Bağlam"],
+                        color: "text-blue-500"
+                      },
+                      {
+                        name: "GPT-4o / 4o-mini",
+                        desc: "OpenAI'ın amiral gemisi. Mantık yürütme, karmaşık talimat takibi ve dengeli performans konusunda endüstri standardıdır.",
+                        tags: ["Mantık", "Dengeli", "Popüler"],
+                        color: "text-emerald-500"
+                      },
+                      {
+                        name: "Claude 3.5 Sonnet",
+                        desc: "Anthropic'in en yetenekli modeli. Kod yazma, nüanslı yazım ve insansı etkileşim konusunda rakipsiz kabul edilir.",
+                        tags: ["Kodlama", "Yazım", "Nüans"],
+                        color: "text-orange-500"
+                      },
+                      {
+                        name: "Llama 3.1 405B",
+                        desc: "Meta'nın devasa açık kaynak modeli. En karmaşık mantık yürütme (reasoning) ve derin veri analizi görevleri için tasarlanmıştır.",
+                        tags: ["Reasoning", "Analiz", "Güç"],
+                        color: "text-purple-500"
+                      },
+                      {
+                        name: "Qwen 2.5 72B",
+                        desc: "Alibaba'nın teknik uzmanı. Matematik, kodlama ve yapılandırılmış veri işleme konularında dünya standartlarındadır.",
+                        tags: ["Matematik", "Kod", "Teknik"],
+                        color: "text-cyan-500"
+                      },
+                      {
+                        name: "DeepSeek V3",
+                        desc: "Kodlama ve teknik dökümantasyon hazırlama konusunda oldukça verimli, tutarlı ve mantıklı yanıtlar üretir.",
+                        tags: ["Kodlama", "Verimlilik", "Mantık"],
+                        color: "text-blue-400"
+                      },
+                      {
+                        name: "Mistral / Mixtral",
+                        desc: "Avrupa menşeli verimli modeller. Hızlı özetleme, sınıflandırma ve temel sohbet görevlerinde çok başarılıdır.",
+                        tags: ["Hız", "Özetleme", "Verimlilik"],
+                        color: "text-orange-400"
+                      },
+                      {
+                        name: "Phi-3 / Gemma 2",
+                        desc: "Küçük ama etkili modeller. Basit görevler, hızlı yanıtlar ve düşük gecikme süreli etkileşimler için idealdir.",
+                        tags: ["Hafif", "Hızlı", "Verimli"],
+                        color: "text-pink-500"
+                      }
+                    ].map(m => (
+                      <div key={m.name} className={cn(
+                        "p-4 rounded-xl border transition-all",
+                        theme === 'dark' ? "bg-[#161616] border-[#222]" : "bg-gray-50 border-gray-200"
+                      )}>
+                        <h4 className={cn("text-sm font-bold mb-2", m.color)}>{m.name}</h4>
+                        <p className={cn("text-xs leading-relaxed mb-3", theme === 'dark' ? "text-[#888]" : "text-gray-500")}>{m.desc}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {m.tags.map(t => (
+                            <span key={t} className={cn(
+                              "text-[9px] font-bold px-1.5 py-0.5 rounded",
+                              theme === 'dark' ? "bg-[#222] text-[#555]" : "bg-white text-gray-400 border border-gray-100"
+                            )}>{t}</span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className={cn("p-4 border-t text-center", theme === 'dark' ? "bg-[#0B0B0B] border-[#1E1E1E]" : "bg-gray-50 border-gray-100")}>
+                  <p className="text-[10px] text-[#555]">Not: Ücretsiz modellerin kullanım limitleri (rate limits) OpenRouter tarafından belirlenir.</p>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
         <AnimatePresence>
           {successMessage && (
             <motion.div 

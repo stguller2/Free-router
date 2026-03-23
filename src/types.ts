@@ -10,6 +10,7 @@ export interface AIModel {
   apiKey?: string;
   lastUsed?: number;
   status: 'idle' | 'active' | 'exhausted' | 'error';
+  tier: number; // 1: Weakest, 5: Strongest
 }
 
 export interface Message {
