@@ -29,14 +29,15 @@ import {
   Moon,
   Plus,
   Database,
-  Square
+  Square,
+  Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { AIService } from './services/aiService';
-import { AIModel, Message, ChatSession } from './types';
+import { AIService, SmartRouter, RoutingDecision } from './services/aiService';
+import { AIModel, Message, ChatSession, ProviderState, ModelProvider, ProviderStatus } from './types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -76,29 +77,6 @@ TEMEL KURALLAR VE YETENEKLER:
 
 Kullanıcının şu anki isteğine, hem mevcut sohbet geçmişini hem de uzun süreli hafızayı sentezleyerek en doğru yanıtı ver.`;
 
-const ROUTING_RULES = [
-  {
-    category: 'Coding & Technical',
-    keywords: ['kod', 'python', 'javascript', 'html', 'css', 'react', 'sql', 'program', 'debug', 'error', 'api', 'json', 'typescript', 'java', 'c++', 'rust', 'go', 'backend', 'frontend', 'developer'],
-    targets: ['claude-3-5-sonnet', 'qwen', 'deepseek', 'codestral']
-  },
-  {
-    category: 'Logic & Analysis',
-    keywords: ['analiz', 'mantık', 'neden', 'ispat', 'felsefe', 'karmaşık', 'strateji', 'matematik', 'denklem', 'problem', 'çözüm', 'kanıt', 'teorem', 'olasılık', 'istatistik'],
-    targets: ['405b', 'gpt-4o', 'llama-3.1', 'pro']
-  },
-  {
-    category: 'Creative Writing',
-    keywords: ['hikaye', 'yaratıcı', 'şiir', 'senaryo', 'kurgu', 'roman', 'edebiyat', 'masal', 'diyalog', 'karakter', 'betimleme', 'anlatı'],
-    targets: ['zephyr', 'claude', 'mistral']
-  },
-  {
-    category: 'Summary & Fast Chat',
-    keywords: ['özet', 'kısaca', 'liste', 'maddeler', 'çeviri', 'tercüme', 'anlamı', 'nedir', 'kimdir'],
-    targets: ['flash', 'mini', '7b', '8b']
-  }
-];
-
 export default function App() {
   const [models, setModels] = useState<AIModel[]>(() => {
     const saved = localStorage.getItem('ai_hub_models');
@@ -136,10 +114,15 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [routingStatus, setRoutingStatus] = useState<'stable' | 'routing' | 'exhausted'>('stable');
   const [openRouterKey, setOpenRouterKey] = useState(() => localStorage.getItem('openrouter_key') || '');
+  const [routerHost, setRouterHost] = useState(() => localStorage.getItem('router_host') || 'https://openrouter.ai/api/v1');
+  const [openFangKey, setOpenFangKey] = useState(() => localStorage.getItem('openfang_key') || '');
+  const [openFangHost, setOpenFangHost] = useState(() => localStorage.getItem('openfang_host') || 'http://localhost:8080');
+  const [passOpenRouterKeyToOpenFang, setPassOpenRouterKeyToOpenFang] = useState(() => localStorage.getItem('pass_openrouter_to_openfang') === 'true');
   const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem('ai_hub_system_prompt') || DEFAULT_SYSTEM_PROMPT);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   const [showModelGuide, setShowModelGuide] = useState(false);
   const [isSystemPromptSaved, setIsSystemPromptSaved] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [isRecording, setIsRecording] = useState(false);
@@ -147,6 +130,63 @@ export default function App() {
   const [copyStatus, setCopyStatus] = useState<number | null>(null);
   const [tokenSpeed, setTokenSpeed] = useState(0);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as 'dark' | 'light') || 'dark');
+  const [serverConfig, setServerConfig] = useState<{ hasOpenRouterKey: boolean, hasOpenFangKey: boolean, hasGeminiKey: boolean }>({
+    hasOpenRouterKey: false,
+    hasOpenFangKey: false,
+    hasGeminiKey: false
+  });
+
+  const [providerStatuses, setProviderStatuses] = useState<Record<string, ProviderState>>({
+    gemini: { id: 'gemini', name: 'Google Gemini', status: 'unknown', lastChecked: Date.now() },
+    openrouter: { id: 'openrouter', name: 'OpenRouter', status: 'unknown', lastChecked: Date.now() },
+    openai: { id: 'openai', name: 'OpenAI', status: 'unknown', lastChecked: Date.now() },
+    anthropic: { id: 'anthropic', name: 'Anthropic', status: 'unknown', lastChecked: Date.now() },
+    deepseek: { id: 'deepseek', name: 'DeepSeek', status: 'unknown', lastChecked: Date.now() },
+    groq: { id: 'groq', name: 'Groq', status: 'unknown', lastChecked: Date.now() },
+    mistral: { id: 'mistral', name: 'Mistral', status: 'unknown', lastChecked: Date.now() },
+    openfang: { id: 'openfang', name: 'OpenFang', status: 'unknown', lastChecked: Date.now() },
+  });
+
+  const updateProviderStatus = (provider: ModelProvider, status: ProviderStatus, latency?: number) => {
+    setProviderStatuses(prev => ({
+      ...prev,
+      [provider]: {
+        ...prev[provider],
+        status,
+        latency,
+        lastChecked: Date.now()
+      }
+    }));
+  };
+
+  useEffect(() => {
+    // Fetch server configuration
+    const fetchConfig = async () => {
+      try {
+        const res = await fetch('/api/config');
+        if (res.ok) {
+          const config = await res.json();
+          setServerConfig(config);
+          
+          // Update model availability based on server config
+          setModels(prev => prev.map(m => {
+            if (m.provider === 'gemini') return { ...m, isAvailable: config.hasGeminiKey };
+            if (m.provider === 'openrouter') return { ...m, isAvailable: !!m.apiKey || config.hasOpenRouterKey };
+            if (m.provider === 'openfang') return { ...m, isAvailable: !!m.apiKey || config.hasOpenFangKey };
+            return m;
+          }));
+
+          if (config.hasGeminiKey) updateProviderStatus('gemini', 'active');
+          if (config.hasOpenRouterKey) updateProviderStatus('openrouter', 'active');
+          if (config.hasOpenFangKey) updateProviderStatus('openfang', 'active');
+        }
+      } catch (e) {
+        console.error("Failed to fetch server config:", e);
+      }
+    };
+    fetchConfig();
+  }, []);
+
   const [lastFailedRequest, setLastFailedRequest] = useState<{
     prompt: string;
     modelId: string;
@@ -171,6 +211,10 @@ export default function App() {
     localStorage.setItem('ai_hub_sessions', JSON.stringify(sessions));
     localStorage.setItem('ai_hub_active_session_id', activeSessionId);
     localStorage.setItem('openrouter_key', openRouterKey);
+    localStorage.setItem('router_host', routerHost);
+    localStorage.setItem('openfang_key', openFangKey);
+    localStorage.setItem('openfang_host', openFangHost);
+    localStorage.setItem('pass_openrouter_to_openfang', String(passOpenRouterKeyToOpenFang));
     localStorage.setItem('ai_hub_system_prompt', systemPrompt);
     localStorage.setItem('theme', theme);
     
@@ -208,6 +252,18 @@ export default function App() {
   };
 
   const setActiveModelId = (modelId: string) => {
+    const currentModel = models.find(m => m.id === activeModelId);
+    const nextModel = models.find(m => m.id === modelId);
+    
+    if (currentModel && nextModel && currentModel.id !== nextModel.id) {
+      const agentMsg: Message = {
+        id: `agent-ready-${Date.now()}`,
+        role: 'system',
+        content: `🧠 **Hafıza Ajanı (Yerel):** \`memory.md\` verileri ${nextModel.name} için hazırlandı. İlk mesajınızla birlikte tüm geçmiş bağlam aktarılacak.`,
+        timestamp: Date.now(),
+      };
+      setMessages(prev => [...prev, agentMsg]);
+    }
     updateActiveSession({ activeModelId: modelId });
   };
 
@@ -243,17 +299,21 @@ export default function App() {
     }
   };
 
-  // Save conversation to memory.md whenever messages change
+  // Save all conversations to memory.md whenever sessions change
   useEffect(() => {
     const saveMemory = async () => {
-      if (messages.length === 0) return;
+      if (sessions.length === 0) return;
 
-      const markdown = messages.map(m => {
-        const role = m.role === 'user' ? '### User' : (m.role === 'system' ? '### System' : '### Assistant');
-        const time = new Date(m.timestamp || Date.now()).toLocaleString('tr-TR');
-        const modelInfo = m.modelId ? ` [Model: ${m.modelId}]` : '';
-        return `${role}${modelInfo} (${time})\n\n${m.content}\n\n---\n`;
-      }).join('\n');
+      const markdown = sessions.map(session => {
+        const sessionHeader = `## Session: ${session.title} (${new Date(session.createdAt).toLocaleString('tr-TR')})\n\n`;
+        const sessionMessages = session.messages.map(m => {
+          const role = m.role === 'user' ? '### User' : (m.role === 'system' ? '### System' : '### Assistant');
+          const time = new Date(m.timestamp || Date.now()).toLocaleString('tr-TR');
+          const modelInfo = m.modelId ? ` [Model: ${m.modelId}]` : '';
+          return `${role}${modelInfo} (${time})\n\n${m.content}\n\n---\n`;
+        }).join('\n');
+        return sessionHeader + sessionMessages;
+      }).join('\n\n');
 
       try {
         await fetch('/api/memory', {
@@ -266,9 +326,9 @@ export default function App() {
       }
     };
 
-    const timeoutId = setTimeout(saveMemory, 1000); // Debounce save
+    const timeoutId = setTimeout(saveMemory, 2000); // Debounce save
     return () => clearTimeout(timeoutId);
-  }, [messages]);
+  }, [sessions]);
 
   useEffect(() => {
     setConnectionStatus('idle');
@@ -282,6 +342,13 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Alt + R to reset all quotas
+      if (e.altKey && e.key.toLowerCase() === 'r') {
+        setModels(prev => prev.map(m => ({ ...m, quotaUsed: 0, status: 'idle' })));
+        setSuccessMessage("Tüm model kotaları sıfırlandı. Artık tüm modelleri kullanabilirsiniz.");
+        setTimeout(() => setSuccessMessage(null), 3000);
+        e.preventDefault();
+      }
       // Alt + 1-9 to switch models
       if (e.altKey && e.key >= '1' && e.key <= '9') {
         const index = parseInt(e.key) - 1;
@@ -312,6 +379,29 @@ export default function App() {
 
   const activeModel = models.find(m => m.id === activeModelId) || models[0];
 
+  const ProviderStatusIndicator = ({ provider }: { provider: ProviderState }) => {
+    const getStatusColor = (status: ProviderStatus) => {
+      switch (status) {
+        case 'active': return 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]';
+        case 'slow': return 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]';
+        case 'error': return 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]';
+        default: return 'bg-gray-500';
+      }
+    };
+
+    return (
+      <div className="flex items-center justify-between py-1 px-2 rounded-md hover:bg-white/5 transition-colors group">
+        <div className="flex items-center gap-2 overflow-hidden">
+          <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", getStatusColor(provider.status))} />
+          <span className="text-[10px] font-medium text-[#777] truncate group-hover:text-[#999] transition-colors">{provider.name}</span>
+        </div>
+        {provider.latency && (
+          <span className="text-[9px] font-mono text-[#444] shrink-0">{provider.latency}ms</span>
+        )}
+      </div>
+    );
+  };
+
   const getModelTier = (modelId: string): number => {
     const id = modelId.toLowerCase();
     if (id.includes('405b') || id.includes('gpt-4o') || id.includes('claude-3-5-sonnet')) return 5;
@@ -329,7 +419,9 @@ export default function App() {
     setError(null);
     try {
       console.log("Fetching models from OpenRouter...");
+      const start = Date.now();
       const freeModels = await AIService.fetchOpenRouterFreeModels(openRouterKey);
+      const latency = Date.now() - start;
       console.log("Models received:", freeModels.length);
       
       const newModels: AIModel[] = freeModels.map((m: any) => ({
@@ -352,6 +444,7 @@ export default function App() {
       
       if (newModels.length > 0) {
         setConnectionStatus('success');
+        updateProviderStatus('openrouter', latency > 2000 ? 'slow' : 'active', latency);
         setActiveModelId(newModels[0].id);
         setSuccessMessage(`Başarılı! ${newModels.length} ücretsiz model havuzuna eklendi.`);
         setTimeout(() => setSuccessMessage(null), 5000);
@@ -361,6 +454,7 @@ export default function App() {
       }
     } catch (err: any) {
       setConnectionStatus('error');
+      updateProviderStatus('openrouter', 'error');
       console.error("Connection error:", err);
       let msg = "OpenRouter bağlantısı başarısız: ";
       if (err.message === "Failed to fetch") {
@@ -369,6 +463,93 @@ export default function App() {
         msg += err.message || "Bilinmeyen hata";
       }
       setError(msg);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  useEffect(() => {
+    // Auto-connect to OpenRouter if key exists on mount
+    if (openRouterKey && connectionStatus === 'idle') {
+      connectOpenRouter();
+    }
+    // Auto-connect to OpenFang if key exists on mount
+    if (openFangKey) {
+      connectOpenFang();
+    }
+  }, []);
+
+  const connectOpenFang = async () => {
+    if (!openFangKey.trim() || !openFangHost.trim()) return;
+    setIsConnecting(true);
+    try {
+      const start = Date.now();
+      
+      // Try to fetch models from OpenFang (OpenAI compatible endpoint)
+      try {
+        const response = await fetch(`${openFangHost.replace(/\/$/, '')}/v1/models`, {
+          headers: {
+            'Authorization': `Bearer ${openFangKey}`
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.data && Array.isArray(data.data)) {
+            const newModels: AIModel[] = data.data.map((m: any) => ({
+              id: m.id,
+              name: `OpenFang: ${m.id}`,
+              provider: 'openfang',
+              quotaLimit: 100,
+              quotaUsed: 0,
+              isAvailable: true,
+              apiKey: openFangKey,
+              status: 'idle',
+              tier: m.id.includes('gpt-4') || m.id.includes('claude-3') ? 5 : 4
+            }));
+            
+            setModels(prev => {
+              const filtered = prev.filter(m => m.provider !== 'openfang');
+              return [...filtered, ...newModels];
+            });
+            
+            const latency = Date.now() - start;
+            updateProviderStatus('openfang', 'active', latency);
+            setSuccessMessage("OpenFang bağlantısı başarılı! Modeller yüklendi.");
+            setTimeout(() => setSuccessMessage(null), 3000);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn("Could not fetch models from OpenFang, falling back to default", e);
+      }
+
+      // Fallback to default model if fetch fails
+      const latency = Date.now() - start;
+      const newModel: AIModel = {
+        id: 'openfang-default',
+        name: 'OpenFang Default',
+        provider: 'openfang',
+        quotaLimit: 100,
+        quotaUsed: 0,
+        isAvailable: true,
+        apiKey: openFangKey,
+        status: 'idle',
+        tier: 4
+      };
+
+      setModels(prev => {
+        const filtered = prev.filter(m => m.id !== 'openfang-default');
+        return [...filtered, newModel];
+      });
+
+      updateProviderStatus('openfang', 'active', latency);
+      setSuccessMessage("OpenFang bağlantısı başarılı!");
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err: any) {
+      console.error("OpenFang connection error:", err);
+      updateProviderStatus('openfang', 'error');
+      setError("OpenFang bağlantısı kurulamadı. Lütfen Host URL ve API Key'i kontrol edin.");
     } finally {
       setIsConnecting(false);
     }
@@ -383,26 +564,6 @@ export default function App() {
         m.quotaUsed < m.quotaLimit
       )
       .sort((a, b) => b.tier - a.tier)[0];
-  };
-
-  const routePrompt = (prompt: string): string | null => {
-    const p = prompt.toLowerCase();
-    
-    for (const rule of ROUTING_RULES) {
-      if (rule.keywords.some(keyword => p.includes(keyword))) {
-        const availableTargets = modelsRef.current.filter(m => 
-          rule.targets.some(target => m.id.toLowerCase().includes(target)) && 
-          m.status !== 'exhausted' && m.quotaUsed < m.quotaLimit
-        );
-        
-        if (availableTargets.length > 0) {
-          // Return the strongest available model for this category
-          return availableTargets.sort((a, b) => b.tier - a.tier)[0].id;
-        }
-      }
-    }
-
-    return null;
   };
 
   const handleSend = async () => {
@@ -461,20 +622,20 @@ export default function App() {
       // Proactive Routing: If smart routing is on, try to pick the best model for the task
       // Only run proactive routing for the FIRST message of a session to maintain context stability
       if (isSmartRouting && currentHistory.length === 0) {
-        const suggestedModelId = routePrompt(finalPrompt);
-        if (suggestedModelId && suggestedModelId !== activeModelId) {
-          const suggestedModel = modelsRef.current.find(m => m.id === suggestedModelId);
+        const decision = await SmartRouter.route(finalPrompt, modelsRef.current);
+        if (decision && decision.modelId !== activeModelId) {
+          const suggestedModel = modelsRef.current.find(m => m.id === decision.modelId);
           if (suggestedModel) {
             setRoutingStatus('routing');
             const routeMsg: Message = {
               id: `route-${Date.now()}`,
               role: 'system',
-              content: `🎯 İstek analizi yapıldı. Bu görev için en uygun model olan **${suggestedModel.name}** seçiliyor...`,
+              content: `🎯 **${decision.category}** tespiti yapıldı. ${decision.reason} En uygun model olan **${suggestedModel.name}** seçiliyor...`,
               timestamp: Date.now(),
             };
             setMessages(prev => [...prev, routeMsg]);
-            setActiveModelId(suggestedModelId);
-            targetModelId = suggestedModelId;
+            setActiveModelId(decision.modelId);
+            targetModelId = decision.modelId;
           }
         }
       }
@@ -507,7 +668,7 @@ export default function App() {
 
           if (!nextModel) {
             setRoutingStatus('exhausted');
-            setError("Kullanılabilir başka model bulunamadı veya tüm modeller başarısız oldu.");
+            setError("Kullanılabilir başka model bulunamadı veya tüm modellerin kotası doldu.");
             break;
           }
 
@@ -566,6 +727,7 @@ export default function App() {
     
     // Check local quota before calling API
     if (model.quotaUsed >= model.quotaLimit) {
+      setError(`${model.name} modelinin yerel kullanım kotası doldu.`);
       throw new Error("QUOTA_EXCEEDED");
     }
 
@@ -578,7 +740,7 @@ export default function App() {
       if (memRes.ok) {
         const memData = await memRes.json();
         if (memData.content) {
-          memoryContext = `\n\n[UZUN SÜRELİ HAFIZA (memory.md)]:\n${memData.content.slice(-4000)}\n(Not: Yukarıdaki hafıza geçmiş konuşmaları içerir.)`;
+          memoryContext = `\n\n[UZUN SÜRELİ HAFIZA (memory.md)]:\n${memData.content.slice(-6000)}\n(Not: Yukarıdaki hafıza geçmiş tüm sohbetleri içerir. Kullanıcının tercihlerini ve geçmişini buradan hatırla.)`;
         }
       }
     } catch (e) {
@@ -593,7 +755,10 @@ export default function App() {
       if (model.provider === 'gemini') {
         responseText = await AIService.callGemini(prompt, history, finalSystemPrompt, attachments, signal);
       } else if (model.provider === 'openrouter' && model.apiKey) {
-        responseText = await AIService.callOpenRouter(prompt, model.apiKey, model.id, history, finalSystemPrompt, signal);
+        responseText = await AIService.callOpenRouter(prompt, model.apiKey, model.id, routerHost, history, finalSystemPrompt, signal);
+      } else if (model.provider === 'openfang' && model.apiKey) {
+        const orKey = passOpenRouterKeyToOpenFang ? openRouterKey : undefined;
+        responseText = await AIService.callOpenFang(prompt, model.apiKey, model.id, openFangHost, orKey, history, finalSystemPrompt, signal);
       } else if (model.provider === 'openai' && model.apiKey) {
         responseText = await AIService.callOpenAI(prompt, model.apiKey, history, finalSystemPrompt, signal);
       } else if (model.provider === 'anthropic' && model.apiKey) {
@@ -610,6 +775,10 @@ export default function App() {
 
       const endTime = Date.now();
       const durationSeconds = (endTime - startTime) / 1000;
+      const latencyMs = endTime - startTime;
+      
+      updateProviderStatus(model.provider, latencyMs > 5000 ? 'slow' : 'active', latencyMs);
+
       const estimatedTokens = responseText.length / 4; // Rough heuristic
       const speed = durationSeconds > 0 ? Math.round(estimatedTokens / durationSeconds) : 0;
       
@@ -628,6 +797,7 @@ export default function App() {
         m.id === modelId ? { ...m, quotaUsed: m.quotaUsed + 1, status: 'idle' } : m
       ));
     } catch (error) {
+      updateProviderStatus(model.provider, 'error');
       setModels(prev => prev.map(m => m.id === modelId ? { ...m, status: error instanceof Error && error.message === 'QUOTA_EXCEEDED' ? 'exhausted' : 'error' } : m));
       throw error;
     }
@@ -672,7 +842,7 @@ export default function App() {
 
           if (!nextModel) {
             setRoutingStatus('exhausted');
-            setError("Kullanılabilir başka model bulunamadı veya tüm modeller başarısız oldu.");
+            setError("Kullanılabilir başka model bulunamadı veya tüm modellerin kotası doldu.");
             break;
           }
 
@@ -729,9 +899,16 @@ export default function App() {
   };
 
   const updateApiKey = (id: string, key: string) => {
-    setModels(prev => prev.map(m => 
-      m.id === id ? { ...m, apiKey: key, isAvailable: !!key || m.provider === 'gemini', status: 'idle' } : m
-    ));
+    setModels(prev => prev.map(m => {
+      if (m.id === id) {
+        const isAvailable = !!key || 
+          (m.provider === 'gemini' && serverConfig.hasGeminiKey) ||
+          (m.provider === 'openrouter' && serverConfig.hasOpenRouterKey) ||
+          (m.provider === 'openfang' && serverConfig.hasOpenFangKey);
+        return { ...m, apiKey: key, isAvailable, status: 'idle' };
+      }
+      return m;
+    }));
   };
 
   return (
@@ -789,27 +966,38 @@ export default function App() {
 
         <div className="flex-1 overflow-y-auto custom-scrollbar">
           <div className="p-4 space-y-6">
-            {/* Connection Status */}
+            {/* Provider Status */}
             <section>
               <div className="flex items-center justify-between mb-3 px-1">
-                <h3 className="text-[11px] font-bold text-[#555] uppercase tracking-wider">Server Status</h3>
+                <h3 className="text-[11px] font-bold text-[#555] uppercase tracking-wider">Provider Status</h3>
                 <div className="flex items-center gap-1.5">
                   <div className={cn(
                     "w-1.5 h-1.5 rounded-full",
-                    connectionStatus === 'success' ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "bg-red-500"
+                    Object.values(providerStatuses).some(p => p.status === 'active') ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "bg-gray-500"
                   )} />
                   <span className="text-[10px] font-medium text-[#777]">
-                    {connectionStatus === 'success' ? "OpenRouter Connected" : "OpenRouter Disconnected"}
+                    System Online
                   </span>
                 </div>
               </div>
               
               <div className={cn(
-                "border rounded-lg p-3 space-y-3",
+                "border rounded-lg p-2 space-y-1",
                 theme === 'dark' ? "bg-[#161616] border-[#222]" : "bg-gray-50 border-gray-200"
               )}>
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className={theme === 'dark' ? "text-[#666]" : "text-gray-500"}>OpenRouter API</span>
+                {Object.values(providerStatuses)
+                  .filter(p => {
+                    // Only show providers that have been checked or are primary
+                    return p.status !== 'unknown' || p.id === 'gemini' || p.id === 'openrouter';
+                  })
+                  .map(provider => (
+                    <ProviderStatusIndicator key={provider.id} provider={provider} />
+                  ))}
+              </div>
+
+              <div className="mt-3 px-1">
+                <div className="flex items-center justify-between text-[11px] mb-2">
+                  <span className={theme === 'dark' ? "text-[#666]" : "text-gray-500"}>Router API (OpenRouter/Free Router)</span>
                   <button 
                     onClick={connectOpenRouter}
                     className="text-blue-500 hover:text-blue-400 font-medium"
@@ -817,16 +1005,77 @@ export default function App() {
                     {isConnecting ? "Connecting..." : (connectionStatus === 'success' ? "Refresh" : "Connect")}
                   </button>
                 </div>
-                <input 
-                  type="password"
-                  placeholder="Enter API Key..."
-                  value={openRouterKey}
-                  onChange={(e) => setOpenRouterKey(e.target.value)}
-                  className={cn(
-                    "w-full border rounded p-2 text-xs focus:outline-none focus:border-blue-500/50 transition-colors",
-                    theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
-                  )}
-                />
+                <div className="space-y-2">
+                  <input 
+                    type="text"
+                    placeholder="Host URL (e.g. https://api.freerouter.ai/v1)"
+                    value={routerHost}
+                    onChange={(e) => setRouterHost(e.target.value)}
+                    className={cn(
+                      "w-full border rounded p-2 text-[10px] focus:outline-none focus:border-blue-500/50 transition-colors",
+                      theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
+                    )}
+                  />
+                  <input 
+                    type="password"
+                    placeholder="Enter API Key..."
+                    value={openRouterKey}
+                    onChange={(e) => setOpenRouterKey(e.target.value)}
+                    className={cn(
+                      "w-full border rounded p-2 text-xs focus:outline-none focus:border-blue-500/50 transition-colors",
+                      theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
+                    )}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 px-1">
+                <div className="flex items-center justify-between text-[11px] mb-2">
+                  <span className={theme === 'dark' ? "text-[#666]" : "text-gray-500"}>OpenFang API</span>
+                  <button 
+                    onClick={connectOpenFang}
+                    className="text-blue-500 hover:text-blue-400 font-medium"
+                  >
+                    {isConnecting ? "Connecting..." : "Connect"}
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  <input 
+                    type="text"
+                    placeholder="Host URL (e.g. http://localhost:8080)"
+                    value={openFangHost}
+                    onChange={(e) => setOpenFangHost(e.target.value)}
+                    className={cn(
+                      "w-full border rounded p-2 text-[10px] focus:outline-none focus:border-blue-500/50 transition-colors",
+                      theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
+                    )}
+                  />
+                  <input 
+                    type="password"
+                    placeholder="Enter OpenFang Key..."
+                    value={openFangKey}
+                    onChange={(e) => setOpenFangKey(e.target.value)}
+                    className={cn(
+                      "w-full border rounded p-2 text-xs focus:outline-none focus:border-blue-500/50 transition-colors",
+                      theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
+                    )}
+                  />
+                </div>
+                <div className="mt-2 flex items-center gap-2 px-1">
+                  <input 
+                    type="checkbox"
+                    id="passOpenRouter"
+                    checked={passOpenRouterKeyToOpenFang}
+                    onChange={(e) => setPassOpenRouterKeyToOpenFang(e.target.checked)}
+                    className="w-3 h-3 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                  />
+                  <label htmlFor="passOpenRouter" className={cn(
+                    "text-[10px] cursor-pointer select-none",
+                    theme === 'dark' ? "text-[#888]" : "text-gray-500"
+                  )}>
+                    OpenRouter Anahtarını Aktar
+                  </label>
+                </div>
               </div>
             </section>
 
@@ -862,8 +1111,35 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              {/* Search Bar */}
+              <div className="mb-3 px-1 relative">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#444]">
+                  <Search size={12} />
+                </div>
+                <input 
+                  type="text"
+                  placeholder="Sohbetlerde ara..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className={cn(
+                    "w-full pl-8 pr-2 py-1.5 text-[10px] rounded-md border focus:outline-none transition-all",
+                    theme === 'dark' 
+                      ? "bg-[#0B0B0B] border-[#222] text-[#999] focus:border-blue-500/30" 
+                      : "bg-white border-gray-200 text-gray-600 focus:border-blue-500/30"
+                  )}
+                />
+              </div>
+
               <div className="space-y-1 max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
-                {sessions.map(session => (
+                {sessions
+                  .filter(session => {
+                    const query = searchQuery.toLowerCase();
+                    const titleMatch = session.title.toLowerCase().includes(query);
+                    const contentMatch = session.messages.some(m => m.content.toLowerCase().includes(query));
+                    return titleMatch || contentMatch;
+                  })
+                  .map(session => (
                   <div
                     key={session.id}
                     onClick={() => setActiveSessionId(session.id)}
@@ -909,13 +1185,24 @@ export default function App() {
                   >
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2 overflow-hidden">
-                        <div className={cn(
-                          "flex items-center justify-center rounded-full",
-                          model.status === 'active' && "text-blue-500 animate-pulse",
-                          model.status === 'idle' && "text-emerald-500",
-                          model.status === 'exhausted' && "text-amber-500",
-                          model.status === 'error' && "text-red-500"
-                        )}>
+                        <div 
+                          onClick={(e) => {
+                            if (model.status === 'exhausted') {
+                              e.stopPropagation();
+                              setModels(prev => prev.map(m => m.id === model.id ? { ...m, quotaUsed: 0, status: 'idle' } : m));
+                              setSuccessMessage(`${model.name} modelinin kotası başarıyla sıfırlandı.`);
+                              setTimeout(() => setSuccessMessage(null), 3000);
+                            }
+                          }}
+                          className={cn(
+                            "flex items-center justify-center rounded-full transition-all",
+                            model.status === 'active' && "text-blue-500 animate-pulse",
+                            model.status === 'idle' && "text-emerald-500",
+                            model.status === 'exhausted' && "text-amber-500 hover:scale-125 hover:text-emerald-500 cursor-pointer",
+                            model.status === 'error' && "text-red-500"
+                          )}
+                          title={model.status === 'exhausted' ? "Kotayı Sıfırla" : ""}
+                        >
                           {model.status === 'active' && <Activity size={10} />}
                           {model.status === 'idle' && <CheckCircle2 size={10} />}
                           {model.status === 'exhausted' && <AlertTriangle size={10} />}
@@ -1679,21 +1966,42 @@ export default function App() {
                         Reset Quota
                       </button>
                     </div>
-                    <div className="relative">
-                      <input
-                        type="password"
-                        placeholder={model.provider === 'gemini' ? "System Configured" : `Enter ${model.name} API Key`}
-                        disabled={model.provider === 'gemini'}
-                        value={model.apiKey || ''}
-                        onChange={(e) => updateApiKey(model.id, e.target.value)}
-                        className="w-full bg-[#161616] border border-[#222] rounded-lg p-3 text-sm text-[#E0E0E0] focus:outline-none focus:border-blue-500/50 transition-all disabled:opacity-30 placeholder:text-[#333]"
-                      />
-                      {model.provider === 'gemini' && (
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                          <ShieldCheck size={16} className="text-emerald-500/50" />
-                        </div>
-                      )}
-                    </div>
+                      <div className="relative">
+                        <input
+                          type="password"
+                          placeholder={
+                            model.provider === 'gemini' 
+                              ? (serverConfig.hasGeminiKey ? "Sistem Tarafından Yapılandırıldı" : "Gemini Anahtarı Eksik") 
+                              : (model.provider === 'openrouter' && serverConfig.hasOpenRouterKey)
+                                ? "Sistem Tarafından Yapılandırıldı (Opsiyonel)"
+                                : (model.provider === 'openfang' && serverConfig.hasOpenFangKey)
+                                  ? "Sistem Tarafından Yapılandırıldı (Opsiyonel)"
+                                  : `Enter ${model.name} API Key`
+                          }
+                          disabled={model.provider === 'gemini'}
+                          value={model.apiKey || ''}
+                          onChange={(e) => updateApiKey(model.id, e.target.value)}
+                          className={cn(
+                            "w-full bg-[#161616] border border-[#222] rounded-lg p-3 text-sm text-[#E0E0E0] focus:outline-none focus:border-blue-500/50 transition-all disabled:opacity-30 placeholder:text-[#333]",
+                            model.provider === 'gemini' && !serverConfig.hasGeminiKey && "border-red-500/30"
+                          )}
+                        />
+                        {(model.provider === 'gemini' || (model.provider === 'openrouter' && serverConfig.hasOpenRouterKey) || (model.provider === 'openfang' && serverConfig.hasOpenFangKey)) && (
+                          <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                            {(model.provider === 'gemini' ? serverConfig.hasGeminiKey : (model.provider === 'openrouter' ? serverConfig.hasOpenRouterKey : serverConfig.hasOpenFangKey)) ? (
+                              <>
+                                <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-tighter">Aktif</span>
+                                <ShieldCheck size={16} className="text-emerald-500/50" />
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-[10px] text-red-500 font-bold uppercase tracking-tighter">Eksik</span>
+                                <AlertCircle size={16} className="text-red-500/50" />
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
                   </div>
                 ))}
               </div>

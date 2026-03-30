@@ -57,10 +57,16 @@ async function startServer() {
 
   // API Proxy for AI Models
   app.post("/api/ai/proxy", async (req, res) => {
-    const { provider, prompt, apiKey, modelName, history, systemInstruction } = req.body;
+    let { provider, prompt, apiKey, modelName, history, systemInstruction } = req.body;
+
+    // Fallback to environment variables if apiKey is missing or placeholder
+    if (!apiKey || apiKey === 'YOUR_OPENROUTER_KEY' || apiKey === 'YOUR_OPENFANG_KEY') {
+      if (provider === 'openrouter') apiKey = process.env.OPENROUTER_API_KEY;
+      if (provider === 'openfang') apiKey = process.env.OPENFANG_API_KEY;
+    }
 
     if (!provider || !apiKey) {
-      return res.status(400).json({ error: "Missing required fields" });
+      return res.status(400).json({ error: "Missing required fields or API key not configured" });
     }
 
     // Helper to format history for different providers
@@ -187,7 +193,10 @@ async function startServer() {
       }
 
       if (provider === 'openrouter') {
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const host = req.headers['x-router-host'] as string || "https://openrouter.ai/api/v1";
+        const endpoint = `${host.replace(/\/$/, '')}/chat/completions`;
+        
+        const response = await fetch(endpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -212,6 +221,36 @@ async function startServer() {
         return res.json({ text: data.choices[0].message.content });
       }
 
+      if (provider === 'openfang') {
+        const host = req.headers['x-openfang-host'] as string || "https://api.openfang.com";
+        const openRouterKey = req.headers['x-openrouter-key'] as string;
+        const endpoint = `${host.replace(/\/$/, '')}/v1/chat/completions`;
+        
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        };
+
+        if (openRouterKey) {
+          headers['X-OpenRouter-Key'] = openRouterKey;
+        }
+
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model: modelName || "openfang-default",
+            messages: commonMessages,
+          }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (response.status === 429) return res.status(429).json({ error: "QUOTA_EXCEEDED" });
+        const data = await response.json();
+        if (!response.ok) return res.status(response.status).json(data);
+        return res.json({ text: data.choices[0]?.message?.content || "Yanıt alınamadı." });
+      }
+
       res.status(400).json({ error: "Invalid provider" });
     } catch (error: any) {
       console.error("Proxy error:", error);
@@ -219,12 +258,49 @@ async function startServer() {
     }
   });
 
+  // Health check endpoint
+  app.get(["/api/health", "/api/health/"], (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // Config endpoint to check which API keys are set on the server
+  app.get("/api/config", (req, res) => {
+    res.json({
+      hasOpenRouterKey: !!process.env.OPENROUTER_API_KEY,
+      hasOpenFangKey: !!process.env.OPENFANG_API_KEY,
+      hasGeminiKey: !!process.env.GEMINI_API_KEY
+    });
+  });
+
+  // OpenRouter health check
+  app.get(["/api/ai/openrouter/health", "/api/ai/openrouter/health/"], async (req, res) => {
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/models", {
+        method: "HEAD"
+      });
+      res.json({ 
+        status: response.ok ? "ok" : "error", 
+        statusCode: response.status,
+        message: response.statusText
+      });
+    } catch (error: any) {
+      res.status(500).json({ status: "error", message: error.message });
+    }
+  });
+
   // Endpoint to fetch OpenRouter models
-  app.get("/api/ai/openrouter/models", async (req, res) => {
-    const apiKey = req.headers.authorization?.split(" ")[1];
+  app.get(["/api/ai/openrouter/models", "/api/ai/openrouter/models/"], async (req, res) => {
+    console.log("GET /api/ai/openrouter/models request received");
+    let apiKey = req.headers.authorization?.split(" ")[1];
+    
+    // Fallback to environment variable
+    if (!apiKey || apiKey === 'undefined' || apiKey === 'null' || apiKey === 'YOUR_OPENROUTER_KEY') {
+      apiKey = process.env.OPENROUTER_API_KEY;
+    }
+
     if (!apiKey) {
       console.log("OpenRouter models request failed: No API key");
-      return res.status(401).json({ error: "API key required" });
+      return res.status(401).json({ error: "API key required. Please configure OPENROUTER_API_KEY in environment variables or enter it in settings." });
     }
 
     try {

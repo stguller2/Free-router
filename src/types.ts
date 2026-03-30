@@ -1,4 +1,14 @@
-export type ModelProvider = 'gemini' | 'openai' | 'anthropic' | 'deepseek' | 'groq' | 'mistral' | 'openrouter';
+export type ModelProvider = 'gemini' | 'openai' | 'anthropic' | 'deepseek' | 'groq' | 'mistral' | 'openrouter' | 'openfang';
+
+export type ProviderStatus = 'active' | 'error' | 'slow' | 'unknown';
+
+export interface ProviderState {
+  id: ModelProvider;
+  name: string;
+  status: ProviderStatus;
+  latency?: number;
+  lastChecked: number;
+}
 
 export interface AIModel {
   id: string;
