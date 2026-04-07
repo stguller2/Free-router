@@ -113,18 +113,6 @@ export class AIService {
     });
   }
 
-  static async callOpenFang(prompt: string, apiKey: string, modelId: string, host: string, openRouterKey?: string, history?: Message[], systemInstruction?: string, signal?: AbortSignal) {
-    const headers: Record<string, string> = {
-      'X-OpenFang-Host': host
-    };
-    
-    if (openRouterKey) {
-      headers['X-OpenRouter-Key'] = openRouterKey;
-    }
-
-    return this.callProxy('openfang', prompt, apiKey, modelId, history, systemInstruction, signal, headers);
-  }
-
   static async fetchOpenRouterFreeModels(apiKey: string) {
     const response = await fetch("/api/ai/openrouter/models", {
       headers: { "Authorization": `Bearer ${apiKey}` }
@@ -186,13 +174,13 @@ export const ROUTING_CATEGORIES = {
     id: 'coding',
     name: 'Yazılım ve Teknik',
     keywords: ['kod', 'python', 'javascript', 'html', 'css', 'react', 'sql', 'program', 'debug', 'error', 'api', 'json', 'typescript', 'java', 'c++', 'rust', 'go', 'backend', 'frontend', 'developer', 'script', 'git', 'docker', 'linux', 'terminal'],
-    targets: ['claude-3-5-sonnet', 'qwen', 'deepseek', 'codestral', 'gpt-4o', 'openfang']
+    targets: ['claude-3-5-sonnet', 'qwen', 'deepseek', 'codestral', 'gpt-4o']
   },
   LOGIC: {
     id: 'logic',
     name: 'Mantık ve Analiz',
     keywords: ['analiz', 'mantık', 'neden', 'ispat', 'felsefe', 'karmaşık', 'strateji', 'matematik', 'denklem', 'problem', 'çözüm', 'kanıt', 'teorem', 'olasılık', 'istatistik', 'finans', 'ekonomi', 'planlama'],
-    targets: ['405b', 'gpt-4o', 'llama-3.1', 'pro', 'claude-3-opus', 'openfang']
+    targets: ['405b', 'gpt-4o', 'llama-3.1', 'pro', 'claude-3-opus']
   },
   CREATIVE: {
     id: 'creative',

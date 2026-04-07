@@ -30,13 +30,16 @@ import {
   Plus,
   Database,
   Square,
-  Search
+  Search,
+  Brain
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { AIService, SmartRouter, RoutingDecision } from './services/aiService';
+import { MemoryPalaceService } from './services/memoryPalaceService';
+import { MemPalace } from './services/mempalace/palace';
 import { AIModel, Message, ChatSession, ProviderState, ModelProvider, ProviderStatus } from './types';
 
 function cn(...inputs: ClassValue[]) {
@@ -69,7 +72,7 @@ const createNewSession = (modelId: string = 'gemini-flash'): ChatSession => ({
 const DEFAULT_SYSTEM_PROMPT = `Sen "Free Router" ekosisteminin bir parçası olan, çoklu model desteğine ve uzun süreli hafızaya sahip gelişmiş bir yapay zeka asistanısın.
 
 TEMEL KURALLAR VE YETENEKLER:
-1. HAFIZA YÖNETİMİ: Sana sunulan "[UZUN SÜRELİ HAFIZA (memory.md)]" bölümündeki bilgileri dikkatle incele. Kullanıcı farklı bir sohbette olsa bile, oradaki geçmiş bilgileri (isim, tercihler, önceki konular) kullanarak tutarlı bir deneyim sun.
+1. HAFIZA YÖNETİMİ: Sana sunulan "[UZUN SÜRELİ HAFIZA (Tüm Modellerden)]" bölümündeki bilgileri dikkatle incele. Bu hafıza tüm modellerin geçmiş etkileşimlerinden toplanmıştır. Kullanıcı farklı bir sohbette veya farklı bir modelle konuşuyor olsa bile, oradaki geçmiş bilgileri (isim, tercihler, önceki konular) kullanarak tutarlı bir deneyim sun.
 2. MODEL FARKINDALIĞI: Sen birçok farklı modelden (Gemini, GPT, Claude, Llama vb.) biri olabilirsin. Eğer bir model hata verirse sistem seni otomatik olarak devreye almış olabilir. Kullanıcıya nerede kaldığını hissettirmeden akıcı bir şekilde yardımcı ol.
 3. DOSYA ANALİZİ: Kullanıcı PDF, resim veya metin dosyası yüklediğinde, bu içeriği en öncelikli bilgi kaynağı olarak kabul et ve derinlemesine analiz yap.
 4. ÜSLUP: Profesyonel, yardımsever ve çözüm odaklı ol. Cevaplarını Markdown formatında, okunaklı ve yapılandırılmış bir şekilde sun.
@@ -81,7 +84,13 @@ export default function App() {
   const [models, setModels] = useState<AIModel[]>(() => {
     const saved = localStorage.getItem('ai_hub_models');
     if (saved) {
-      return JSON.parse(saved);
+      try {
+        const parsed = JSON.parse(saved);
+        // Reset status to idle on mount so we don't carry over "exhausted" from previous sessions
+        return parsed.map((m: any) => ({ ...m, status: 'idle' }));
+      } catch (e) {
+        console.error("Failed to parse saved models:", e);
+      }
     }
     return INITIAL_MODELS;
   });
@@ -112,12 +121,10 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [routingStatus, setRoutingStatus] = useState<'stable' | 'routing' | 'exhausted'>('stable');
+  const [routingStatus, setRoutingStatus] = useState<'stable' | 'routing' | 'exhausted' | 'mining'>('stable');
+  const [memoryContent, setMemoryContent] = useState<string>("");
+  const [isMemoryModalOpen, setIsMemoryModalOpen] = useState(false);
   const [openRouterKey, setOpenRouterKey] = useState(() => localStorage.getItem('openrouter_key') || '');
-  const [routerHost, setRouterHost] = useState(() => localStorage.getItem('router_host') || 'https://openrouter.ai/api/v1');
-  const [openFangKey, setOpenFangKey] = useState(() => localStorage.getItem('openfang_key') || '');
-  const [openFangHost, setOpenFangHost] = useState(() => localStorage.getItem('openfang_host') || 'http://localhost:8080');
-  const [passOpenRouterKeyToOpenFang, setPassOpenRouterKeyToOpenFang] = useState(() => localStorage.getItem('pass_openrouter_to_openfang') === 'true');
   const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem('ai_hub_system_prompt') || DEFAULT_SYSTEM_PROMPT);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   const [showModelGuide, setShowModelGuide] = useState(false);
@@ -130,21 +137,29 @@ export default function App() {
   const [copyStatus, setCopyStatus] = useState<number | null>(null);
   const [tokenSpeed, setTokenSpeed] = useState(0);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as 'dark' | 'light') || 'dark');
-  const [serverConfig, setServerConfig] = useState<{ hasOpenRouterKey: boolean, hasOpenFangKey: boolean, hasGeminiKey: boolean }>({
+  const [serverConfig, setServerConfig] = useState<{ hasOpenRouterKey: boolean, hasGeminiKey: boolean }>({
     hasOpenRouterKey: false,
-    hasOpenFangKey: false,
     hasGeminiKey: false
   });
 
-  const [providerStatuses, setProviderStatuses] = useState<Record<string, ProviderState>>({
-    gemini: { id: 'gemini', name: 'Google Gemini', status: 'unknown', lastChecked: Date.now() },
-    openrouter: { id: 'openrouter', name: 'OpenRouter', status: 'unknown', lastChecked: Date.now() },
-    openai: { id: 'openai', name: 'OpenAI', status: 'unknown', lastChecked: Date.now() },
-    anthropic: { id: 'anthropic', name: 'Anthropic', status: 'unknown', lastChecked: Date.now() },
-    deepseek: { id: 'deepseek', name: 'DeepSeek', status: 'unknown', lastChecked: Date.now() },
-    groq: { id: 'groq', name: 'Groq', status: 'unknown', lastChecked: Date.now() },
-    mistral: { id: 'mistral', name: 'Mistral', status: 'unknown', lastChecked: Date.now() },
-    openfang: { id: 'openfang', name: 'OpenFang', status: 'unknown', lastChecked: Date.now() },
+  const [providerStatuses, setProviderStatuses] = useState<Record<string, ProviderState>>(() => {
+    const saved = localStorage.getItem('ai_hub_provider_statuses');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Failed to parse saved provider statuses:", e);
+      }
+    }
+    return {
+      gemini: { id: 'gemini', name: 'Google Gemini', status: 'unknown', lastChecked: Date.now() },
+      openrouter: { id: 'openrouter', name: 'OpenRouter', status: 'unknown', lastChecked: Date.now() },
+      openai: { id: 'openai', name: 'OpenAI', status: 'unknown', lastChecked: Date.now() },
+      anthropic: { id: 'anthropic', name: 'Anthropic', status: 'unknown', lastChecked: Date.now() },
+      deepseek: { id: 'deepseek', name: 'DeepSeek', status: 'unknown', lastChecked: Date.now() },
+      groq: { id: 'groq', name: 'Groq', status: 'unknown', lastChecked: Date.now() },
+      mistral: { id: 'mistral', name: 'Mistral', status: 'unknown', lastChecked: Date.now() },
+    };
   });
 
   const updateProviderStatus = (provider: ModelProvider, status: ProviderStatus, latency?: number) => {
@@ -160,31 +175,79 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Fetch server configuration
-    const fetchConfig = async () => {
+    // Fetch server configuration and dynamic models
+    const fetchInitialData = async () => {
       try {
-        const res = await fetch('/api/config');
-        if (res.ok) {
-          const config = await res.json();
+        // 1. Fetch Config
+        const configRes = await fetch('/api/config');
+        let config = { hasOpenRouterKey: false, hasGeminiKey: false };
+        if (configRes.ok) {
+          config = await configRes.json();
           setServerConfig(config);
+        }
+
+        // 2. Fetch Dynamic Models
+        const dynamicRes = await fetch('/api/models/dynamic');
+        let dynamicModels: AIModel[] = [];
+        if (dynamicRes.ok) {
+          dynamicModels = await dynamicRes.json();
+        }
+
+        // 3. Merge and Update Models
+        setModels(prev => {
+          // Start with existing models (from localStorage or INITIAL_MODELS)
+          const currentModels = [...prev];
           
-          // Update model availability based on server config
-          setModels(prev => prev.map(m => {
+          // Add dynamic models if they don't exist
+          dynamicModels.forEach(dm => {
+            if (!currentModels.some(m => m.id === dm.id)) {
+              currentModels.push({
+                ...dm,
+                isAvailable: config.hasOpenRouterKey || !!dm.apiKey,
+                status: 'idle'
+              });
+            }
+          });
+
+          // Update availability for all models based on config
+          return currentModels.map(m => {
             if (m.provider === 'gemini') return { ...m, isAvailable: config.hasGeminiKey };
             if (m.provider === 'openrouter') return { ...m, isAvailable: !!m.apiKey || config.hasOpenRouterKey };
-            if (m.provider === 'openfang') return { ...m, isAvailable: !!m.apiKey || config.hasOpenFangKey };
             return m;
-          }));
+          });
+        });
 
-          if (config.hasGeminiKey) updateProviderStatus('gemini', 'active');
-          if (config.hasOpenRouterKey) updateProviderStatus('openrouter', 'active');
-          if (config.hasOpenFangKey) updateProviderStatus('openfang', 'active');
-        }
+        if (config.hasGeminiKey) updateProviderStatus('gemini', 'active');
+        if (config.hasOpenRouterKey) updateProviderStatus('openrouter', 'active');
       } catch (e) {
-        console.error("Failed to fetch server config:", e);
+        console.error("Failed to fetch initial data:", e);
       }
     };
-    fetchConfig();
+    fetchInitialData();
+  }, []);
+
+  // Periodic cleanup of exhausted free models (every 5 minutes)
+  useEffect(() => {
+    const cleanupInterval = setInterval(() => {
+      setModels(prev => {
+        const filtered = prev.filter(m => {
+          // If it's a free model and it's exhausted or has error, remove it
+          const isFree = m.id.includes(':free') || m.name.toLowerCase().includes('free');
+          const isExhausted = m.status === 'exhausted' || m.status === 'error';
+          
+          // Keep it if it's not both free and exhausted/error
+          return !(isFree && isExhausted);
+        });
+        
+        if (filtered.length !== prev.length) {
+          console.log(`[Cleanup] Removed ${prev.length - filtered.length} exhausted free models.`);
+        }
+        
+        return filtered;
+      });
+    }, 300000); // 5 minutes
+    
+    return () => clearInterval(cleanupInterval);
   }, []);
 
   const [lastFailedRequest, setLastFailedRequest] = useState<{
@@ -211,19 +274,16 @@ export default function App() {
     localStorage.setItem('ai_hub_sessions', JSON.stringify(sessions));
     localStorage.setItem('ai_hub_active_session_id', activeSessionId);
     localStorage.setItem('openrouter_key', openRouterKey);
-    localStorage.setItem('router_host', routerHost);
-    localStorage.setItem('openfang_key', openFangKey);
-    localStorage.setItem('openfang_host', openFangHost);
-    localStorage.setItem('pass_openrouter_to_openfang', String(passOpenRouterKeyToOpenFang));
     localStorage.setItem('ai_hub_system_prompt', systemPrompt);
     localStorage.setItem('theme', theme);
+    localStorage.setItem('ai_hub_provider_statuses', JSON.stringify(providerStatuses));
     
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
-  }, [models, sessions, activeSessionId, openRouterKey, theme]);
+  }, [models, sessions, activeSessionId, openRouterKey, theme, providerStatuses]);
 
   const updateActiveSession = (updates: Partial<ChatSession>) => {
     setSessions(prev => prev.map(s => 
@@ -251,20 +311,39 @@ export default function App() {
     }));
   };
 
-  const setActiveModelId = (modelId: string) => {
+  const setActiveModelId = (modelId: string, silent: boolean = false) => {
     const currentModel = models.find(m => m.id === activeModelId);
     const nextModel = models.find(m => m.id === modelId);
     
-    if (currentModel && nextModel && currentModel.id !== nextModel.id) {
+    if (!silent && currentModel && nextModel && currentModel.id !== nextModel.id) {
       const agentMsg: Message = {
         id: `agent-ready-${Date.now()}`,
         role: 'system',
-        content: `🧠 **Hafıza Ajanı (Yerel):** \`memory.md\` verileri ${nextModel.name} için hazırlandı. İlk mesajınızla birlikte tüm geçmiş bağlam aktarılacak.`,
+        content: `🧠 **Hafıza Ajanı (Yerel):** Hafıza verileri ${nextModel.name} için hazırlandı. İlk mesajınızla birlikte tüm geçmiş bağlam aktarılacak.`,
         timestamp: Date.now(),
       };
       setMessages(prev => [...prev, agentMsg]);
     }
     updateActiveSession({ activeModelId: modelId });
+  };
+
+  const handleViewMemory = async () => {
+    setIsMemoryModalOpen(true);
+    setMemoryContent("Ortak hafıza yükleniyor...");
+    try {
+      const res = await fetch(`/api/memory/global_palace`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.content && data.content.startsWith('{')) {
+          const palace = MemPalace.fromJSON(data.content);
+          setMemoryContent(palace.getPalaceView());
+        } else {
+          setMemoryContent(data.content || "Henüz ortak hafıza kaydı yok.");
+        }
+      }
+    } catch (err) {
+      setMemoryContent("Hafıza yüklenirken bir hata oluştu.");
+    }
   };
 
   const handleSaveSystemPrompt = () => {
@@ -299,40 +378,55 @@ export default function App() {
     }
   };
 
-  // Save all conversations to memory.md whenever sessions change
+  // Save conversations to model-specific memory files whenever sessions change
   useEffect(() => {
     const saveMemory = async () => {
       if (sessions.length === 0) return;
 
-      const markdown = sessions.map(session => {
-        const sessionHeader = `## Session: ${session.title} (${new Date(session.createdAt).toLocaleString('tr-TR')})\n\n`;
-        const sessionMessages = session.messages.map(m => {
-          const role = m.role === 'user' ? '### User' : (m.role === 'system' ? '### System' : '### Assistant');
-          const time = new Date(m.timestamp || Date.now()).toLocaleString('tr-TR');
-          const modelInfo = m.modelId ? ` [Model: ${m.modelId}]` : '';
-          return `${role}${modelInfo} (${time})\n\n${m.content}\n\n---\n`;
-        }).join('\n');
-        return sessionHeader + sessionMessages;
-      }).join('\n\n');
+      // Group sessions by their active model
+      const modelMemories: Record<string, ChatSession[]> = {};
+      sessions.forEach(session => {
+        const mid = session.activeModelId || 'unknown';
+        if (!modelMemories[mid]) modelMemories[mid] = [];
+        modelMemories[mid].push(session);
+      });
 
-      try {
-        await fetch('/api/memory', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: markdown })
-        });
-      } catch (err) {
-        console.error("Failed to save memory.md:", err);
+      // Save each model's memory separately
+      for (const [modelId, modelSessions] of Object.entries(modelMemories)) {
+        const newMarkdown = modelSessions.map(session => {
+          const sessionHeader = `## Session: ${session.title} (${new Date(session.createdAt).toLocaleString('tr-TR')})\n\n`;
+          const sessionMessages = session.messages.map(m => {
+            const role = m.role === 'user' ? '### User' : (m.role === 'system' ? '### System' : '### Assistant');
+            const time = new Date(m.timestamp || Date.now()).toLocaleString('tr-TR');
+            const modelInfo = m.modelId ? ` [Model: ${m.modelId}]` : '';
+            return `${role}${modelInfo} (${time})\n\n${m.content}\n\n---\n`;
+          }).join('\n');
+          return sessionHeader + sessionMessages;
+        }).join('\n\n');
+
+        try {
+          // Trigger Mining/Saving via MemoryPalaceService
+          // We pass the raw markdown which the service will mine into the Palace
+          if (newMarkdown.length > 500) {
+            setRoutingStatus('mining');
+            await MemoryPalaceService.mineMemory(newMarkdown);
+            setRoutingStatus('stable');
+          }
+        } catch (err) {
+          console.error(`Failed to save global memory:`, err);
+        }
       }
     };
 
-    const timeoutId = setTimeout(saveMemory, 2000); // Debounce save
+    const timeoutId = setTimeout(saveMemory, 5000); // Increased debounce for mining
     return () => clearTimeout(timeoutId);
   }, [sessions]);
 
   useEffect(() => {
-    setConnectionStatus('idle');
-  }, [openRouterKey]);
+    if (openRouterKey || serverConfig.hasOpenRouterKey) {
+      connectOpenRouter();
+    }
+  }, [serverConfig.hasOpenRouterKey]);
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -409,150 +503,6 @@ export default function App() {
     if (id.includes('flash') || id.includes('70b') || id.includes('mini')) return 3;
     if (id.includes('8b') || id.includes('9b') || id.includes('nemo')) return 2;
     return 1;
-  };
-
-  const connectOpenRouter = async () => {
-    console.log("Connect button clicked, key length:", openRouterKey.length);
-    if (!openRouterKey.trim()) return;
-    setIsConnecting(true);
-    setConnectionStatus('idle');
-    setError(null);
-    try {
-      console.log("Fetching models from OpenRouter...");
-      const start = Date.now();
-      const freeModels = await AIService.fetchOpenRouterFreeModels(openRouterKey);
-      const latency = Date.now() - start;
-      console.log("Models received:", freeModels.length);
-      
-      const newModels: AIModel[] = freeModels.map((m: any) => ({
-        id: m.id,
-        name: m.name || m.id.split('/')[1],
-        provider: 'openrouter',
-        quotaLimit: 50, // Arbitrary high limit for free tier
-        quotaUsed: 0,
-        isAvailable: true,
-        apiKey: openRouterKey,
-        status: 'idle',
-        tier: getModelTier(m.id)
-      }));
-
-      // Keep existing non-openrouter models and add new ones
-      setModels(prev => {
-        const filtered = prev.filter(m => m.provider !== 'openrouter');
-        return [...filtered, ...newModels];
-      });
-      
-      if (newModels.length > 0) {
-        setConnectionStatus('success');
-        updateProviderStatus('openrouter', latency > 2000 ? 'slow' : 'active', latency);
-        setActiveModelId(newModels[0].id);
-        setSuccessMessage(`Başarılı! ${newModels.length} ücretsiz model havuzuna eklendi.`);
-        setTimeout(() => setSuccessMessage(null), 5000);
-      } else {
-        setConnectionStatus('error');
-        setError("Hiç ücretsiz model bulunamadı. Lütfen API anahtarını kontrol edin.");
-      }
-    } catch (err: any) {
-      setConnectionStatus('error');
-      updateProviderStatus('openrouter', 'error');
-      console.error("Connection error:", err);
-      let msg = "OpenRouter bağlantısı başarısız: ";
-      if (err.message === "Failed to fetch") {
-        msg += "Sunucuya ulaşılamıyor. Lütfen internet bağlantınızı kontrol edin.";
-      } else {
-        msg += err.message || "Bilinmeyen hata";
-      }
-      setError(msg);
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  useEffect(() => {
-    // Auto-connect to OpenRouter if key exists on mount
-    if (openRouterKey && connectionStatus === 'idle') {
-      connectOpenRouter();
-    }
-    // Auto-connect to OpenFang if key exists on mount
-    if (openFangKey) {
-      connectOpenFang();
-    }
-  }, []);
-
-  const connectOpenFang = async () => {
-    if (!openFangKey.trim() || !openFangHost.trim()) return;
-    setIsConnecting(true);
-    try {
-      const start = Date.now();
-      
-      // Try to fetch models from OpenFang (OpenAI compatible endpoint)
-      try {
-        const response = await fetch(`${openFangHost.replace(/\/$/, '')}/v1/models`, {
-          headers: {
-            'Authorization': `Bearer ${openFangKey}`
-          }
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          if (data.data && Array.isArray(data.data)) {
-            const newModels: AIModel[] = data.data.map((m: any) => ({
-              id: m.id,
-              name: `OpenFang: ${m.id}`,
-              provider: 'openfang',
-              quotaLimit: 100,
-              quotaUsed: 0,
-              isAvailable: true,
-              apiKey: openFangKey,
-              status: 'idle',
-              tier: m.id.includes('gpt-4') || m.id.includes('claude-3') ? 5 : 4
-            }));
-            
-            setModels(prev => {
-              const filtered = prev.filter(m => m.provider !== 'openfang');
-              return [...filtered, ...newModels];
-            });
-            
-            const latency = Date.now() - start;
-            updateProviderStatus('openfang', 'active', latency);
-            setSuccessMessage("OpenFang bağlantısı başarılı! Modeller yüklendi.");
-            setTimeout(() => setSuccessMessage(null), 3000);
-            return;
-          }
-        }
-      } catch (e) {
-        console.warn("Could not fetch models from OpenFang, falling back to default", e);
-      }
-
-      // Fallback to default model if fetch fails
-      const latency = Date.now() - start;
-      const newModel: AIModel = {
-        id: 'openfang-default',
-        name: 'OpenFang Default',
-        provider: 'openfang',
-        quotaLimit: 100,
-        quotaUsed: 0,
-        isAvailable: true,
-        apiKey: openFangKey,
-        status: 'idle',
-        tier: 4
-      };
-
-      setModels(prev => {
-        const filtered = prev.filter(m => m.id !== 'openfang-default');
-        return [...filtered, newModel];
-      });
-
-      updateProviderStatus('openfang', 'active', latency);
-      setSuccessMessage("OpenFang bağlantısı başarılı!");
-      setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err: any) {
-      console.error("OpenFang connection error:", err);
-      updateProviderStatus('openfang', 'error');
-      setError("OpenFang bağlantısı kurulamadı. Lütfen Host URL ve API Key'i kontrol edin.");
-    } finally {
-      setIsConnecting(false);
-    }
   };
 
   const findNextAvailableModel = (excludeIds: string[]) => {
@@ -634,7 +584,7 @@ export default function App() {
               timestamp: Date.now(),
             };
             setMessages(prev => [...prev, routeMsg]);
-            setActiveModelId(decision.modelId);
+            setActiveModelId(decision.modelId, true);
             targetModelId = decision.modelId;
           }
         }
@@ -662,7 +612,14 @@ export default function App() {
 
         // Try to find and use next models until success or exhaustion
         while (true) {
-          setModels(prev => prev.map(m => m.id === currentFailedModelId ? { ...m, status: 'exhausted' } : m));
+          const isQuotaError = lastError.message === 'QUOTA_EXCEEDED' || 
+                               (lastError.message && lastError.message.toLowerCase().includes('limit'));
+          
+          setModels(prev => prev.map(m => m.id === currentFailedModelId ? { 
+            ...m, 
+            status: isQuotaError ? 'exhausted' : 'error' 
+          } : m));
+          
           const currentModel = modelsRef.current.find(m => m.id === currentFailedModelId);
           const nextModel = findNextAvailableModel(exhaustedIds);
 
@@ -685,7 +642,7 @@ export default function App() {
           };
           
           setMessages(prev => [...prev, systemMsg]);
-          setActiveModelId(nextModel.id);
+          setActiveModelId(nextModel.id, true);
           
           try {
             // We need to pass the actual model object or data because models state is stale here
@@ -733,18 +690,23 @@ export default function App() {
 
     setModels(prev => prev.map(m => m.id === modelId ? { ...m, status: 'active' } : m));
 
-    // Fetch memory.md to provide long-term context
+    // Fetch global memory to provide long-term context
     let memoryContext = "";
     try {
-      const memRes = await fetch('/api/memory');
-      if (memRes.ok) {
-        const memData = await memRes.json();
-        if (memData.content) {
-          memoryContext = `\n\n[UZUN SÜRELİ HAFIZA (memory.md)]:\n${memData.content.slice(-6000)}\n(Not: Yukarıdaki hafıza geçmiş tüm sohbetleri içerir. Kullanıcının tercihlerini ve geçmişini buradan hatırla.)`;
+      const modelMemRes = await fetch(`/api/memory/global_palace`);
+      if (modelMemRes.ok) {
+        const modelMemData = await modelMemRes.json();
+        if (modelMemData.content) {
+          if (modelMemData.content.startsWith('{')) {
+            const palace = MemPalace.fromJSON(modelMemData.content);
+            memoryContext = `\n\n[ORTAK HAFIZA SARAYI (Tüm Modeller İçin)]:\n${palace.getPalaceView()}\n(Not: Bu bilgiler tüm modellerle olan geçmişinden derlenmiş ortak bilgilerdir.)`;
+          } else {
+            memoryContext = `\n\n[GEÇMİŞ SOHBETLER]:\n${modelMemData.content.slice(-4000)}`;
+          }
         }
       }
     } catch (e) {
-      console.warn("Memory context could not be loaded", e);
+      console.warn("Global memory context could not be loaded", e);
     }
 
     const finalSystemPrompt = `${systemPrompt}${memoryContext}`;
@@ -754,11 +716,9 @@ export default function App() {
     try {
       if (model.provider === 'gemini') {
         responseText = await AIService.callGemini(prompt, history, finalSystemPrompt, attachments, signal);
-      } else if (model.provider === 'openrouter' && model.apiKey) {
-        responseText = await AIService.callOpenRouter(prompt, model.apiKey, model.id, routerHost, history, finalSystemPrompt, signal);
-      } else if (model.provider === 'openfang' && model.apiKey) {
-        const orKey = passOpenRouterKeyToOpenFang ? openRouterKey : undefined;
-        responseText = await AIService.callOpenFang(prompt, model.apiKey, model.id, openFangHost, orKey, history, finalSystemPrompt, signal);
+      } else if (model.provider === 'openrouter' && (model.apiKey || openRouterKey || serverConfig.hasOpenRouterKey)) {
+        const key = model.apiKey || openRouterKey || 'SYSTEM';
+        responseText = await AIService.callOpenRouter(prompt, key, model.id, "https://openrouter.ai/api/v1", history, finalSystemPrompt, signal);
       } else if (model.provider === 'openai' && model.apiKey) {
         responseText = await AIService.callOpenAI(prompt, model.apiKey, history, finalSystemPrompt, signal);
       } else if (model.provider === 'anthropic' && model.apiKey) {
@@ -859,7 +819,7 @@ export default function App() {
           };
           
           setMessages(prev => [...prev, systemMsg]);
-          setActiveModelId(nextModel.id);
+          setActiveModelId(nextModel.id, true);
           
           try {
             await attemptAIRequest(prompt, nextModel.id, history, attachments, abortControllerRef.current?.signal);
@@ -898,13 +858,55 @@ export default function App() {
     setRoutingStatus('stable');
   };
 
+  const connectOpenRouter = async () => {
+    if (!openRouterKey && !serverConfig.hasOpenRouterKey) {
+      setError("Lütfen bir OpenRouter API anahtarı girin.");
+      return;
+    }
+    
+    setIsConnecting(true);
+    setConnectionStatus('idle');
+    
+    try {
+      const headers: Record<string, string> = {};
+      if (openRouterKey) {
+        headers['Authorization'] = `Bearer ${openRouterKey}`;
+      }
+      
+      const res = await fetch('/api/ai/openrouter/models', { headers });
+      
+      if (res.ok) {
+        setConnectionStatus('success');
+        localStorage.setItem('openrouter_key', openRouterKey);
+        updateProviderStatus('openrouter', 'active');
+        
+        // Refresh models availability
+        setModels(prev => prev.map(m => {
+          if (m.provider === 'openrouter') {
+            return { ...m, isAvailable: true, status: 'idle' };
+          }
+          return m;
+        }));
+        
+        setTimeout(() => setConnectionStatus('idle'), 3000);
+      } else {
+        setConnectionStatus('error');
+        updateProviderStatus('openrouter', 'error');
+      }
+    } catch (err) {
+      setConnectionStatus('error');
+      updateProviderStatus('openrouter', 'error');
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   const updateApiKey = (id: string, key: string) => {
     setModels(prev => prev.map(m => {
       if (m.id === id) {
         const isAvailable = !!key || 
           (m.provider === 'gemini' && serverConfig.hasGeminiKey) ||
-          (m.provider === 'openrouter' && serverConfig.hasOpenRouterKey) ||
-          (m.provider === 'openfang' && serverConfig.hasOpenFangKey);
+          (m.provider === 'openrouter' && serverConfig.hasOpenRouterKey);
         return { ...m, apiKey: key, isAvailable, status: 'idle' };
       }
       return m;
@@ -966,6 +968,60 @@ export default function App() {
 
         <div className="flex-1 overflow-y-auto custom-scrollbar">
           <div className="p-4 space-y-6">
+            {/* OpenRouter Connection Section */}
+            <section>
+              <div className="flex items-center justify-between mb-3 px-1">
+                <h3 className="text-[11px] font-bold text-[#555] uppercase tracking-wider">OpenRouter API</h3>
+                <div className="flex items-center gap-1.5">
+                  <div className={cn(
+                    "w-1.5 h-1.5 rounded-full",
+                    providerStatuses.openrouter.status === 'active' ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : 
+                    providerStatuses.openrouter.status === 'error' ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]" : "bg-gray-500"
+                  )} />
+                  <span className="text-[10px] font-medium text-[#777]">
+                    {providerStatuses.openrouter.status === 'active' ? "Connected" : providerStatuses.openrouter.status === 'error' ? "Error" : "Disconnected"}
+                  </span>
+                </div>
+              </div>
+              
+              <div className={cn(
+                "border rounded-lg p-3 space-y-3",
+                theme === 'dark' ? "bg-[#161616] border-[#222]" : "bg-gray-50 border-gray-200"
+              )}>
+                <div className="relative">
+                  <input 
+                    type="password"
+                    placeholder={serverConfig.hasOpenRouterKey ? "System Key Active" : "Enter API Key..."}
+                    value={openRouterKey}
+                    onChange={(e) => setOpenRouterKey(e.target.value)}
+                    className={cn(
+                      "w-full bg-[#0B0B0B] border border-[#222] rounded-md pl-3 pr-8 py-2 text-[10px] text-[#999] focus:outline-none focus:border-blue-500/30 transition-all",
+                      theme === 'dark' ? "bg-[#0B0B0B]" : "bg-white"
+                    )}
+                  />
+                  {serverConfig.hasOpenRouterKey && (
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                      <ShieldCheck size={12} className="text-emerald-500/50" />
+                    </div>
+                  )}
+                </div>
+                <button 
+                  onClick={connectOpenRouter}
+                  disabled={isConnecting}
+                  className={cn(
+                    "w-full py-2 rounded-md font-bold text-[10px] uppercase tracking-widest transition-all",
+                    providerStatuses.openrouter.status === 'active' 
+                      ? "bg-emerald-600/20 text-emerald-500 border border-emerald-500/30" 
+                      : providerStatuses.openrouter.status === 'error'
+                        ? "bg-red-600/20 text-red-500 border border-red-500/30"
+                        : "bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/10"
+                  )}
+                >
+                  {isConnecting ? "Connecting..." : providerStatuses.openrouter.status === 'active' ? "Connected" : "Connect"}
+                </button>
+              </div>
+            </section>
+
             {/* Provider Status */}
             <section>
               <div className="flex items-center justify-between mb-3 px-1">
@@ -993,89 +1049,6 @@ export default function App() {
                   .map(provider => (
                     <ProviderStatusIndicator key={provider.id} provider={provider} />
                   ))}
-              </div>
-
-              <div className="mt-3 px-1">
-                <div className="flex items-center justify-between text-[11px] mb-2">
-                  <span className={theme === 'dark' ? "text-[#666]" : "text-gray-500"}>Router API (OpenRouter/Free Router)</span>
-                  <button 
-                    onClick={connectOpenRouter}
-                    className="text-blue-500 hover:text-blue-400 font-medium"
-                  >
-                    {isConnecting ? "Connecting..." : (connectionStatus === 'success' ? "Refresh" : "Connect")}
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <input 
-                    type="text"
-                    placeholder="Host URL (e.g. https://api.freerouter.ai/v1)"
-                    value={routerHost}
-                    onChange={(e) => setRouterHost(e.target.value)}
-                    className={cn(
-                      "w-full border rounded p-2 text-[10px] focus:outline-none focus:border-blue-500/50 transition-colors",
-                      theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
-                    )}
-                  />
-                  <input 
-                    type="password"
-                    placeholder="Enter API Key..."
-                    value={openRouterKey}
-                    onChange={(e) => setOpenRouterKey(e.target.value)}
-                    className={cn(
-                      "w-full border rounded p-2 text-xs focus:outline-none focus:border-blue-500/50 transition-colors",
-                      theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
-                    )}
-                  />
-                </div>
-              </div>
-
-              <div className="mt-3 px-1">
-                <div className="flex items-center justify-between text-[11px] mb-2">
-                  <span className={theme === 'dark' ? "text-[#666]" : "text-gray-500"}>OpenFang API</span>
-                  <button 
-                    onClick={connectOpenFang}
-                    className="text-blue-500 hover:text-blue-400 font-medium"
-                  >
-                    {isConnecting ? "Connecting..." : "Connect"}
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <input 
-                    type="text"
-                    placeholder="Host URL (e.g. http://localhost:8080)"
-                    value={openFangHost}
-                    onChange={(e) => setOpenFangHost(e.target.value)}
-                    className={cn(
-                      "w-full border rounded p-2 text-[10px] focus:outline-none focus:border-blue-500/50 transition-colors",
-                      theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
-                    )}
-                  />
-                  <input 
-                    type="password"
-                    placeholder="Enter OpenFang Key..."
-                    value={openFangKey}
-                    onChange={(e) => setOpenFangKey(e.target.value)}
-                    className={cn(
-                      "w-full border rounded p-2 text-xs focus:outline-none focus:border-blue-500/50 transition-colors",
-                      theme === 'dark' ? "bg-[#0B0B0B] border-[#2A2A2A] text-white" : "bg-white border-gray-300 text-gray-900"
-                    )}
-                  />
-                </div>
-                <div className="mt-2 flex items-center gap-2 px-1">
-                  <input 
-                    type="checkbox"
-                    id="passOpenRouter"
-                    checked={passOpenRouterKeyToOpenFang}
-                    onChange={(e) => setPassOpenRouterKeyToOpenFang(e.target.checked)}
-                    className="w-3 h-3 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
-                  />
-                  <label htmlFor="passOpenRouter" className={cn(
-                    "text-[10px] cursor-pointer select-none",
-                    theme === 'dark' ? "text-[#888]" : "text-gray-500"
-                  )}>
-                    OpenRouter Anahtarını Aktar
-                  </label>
-                </div>
               </div>
             </section>
 
@@ -1170,7 +1143,19 @@ export default function App() {
 
             {/* Model List */}
             <section>
-              <h3 className="text-[11px] font-bold text-[#555] uppercase tracking-wider mb-3 px-1">Loaded Models</h3>
+              <div className="flex items-center justify-between mb-3 px-1">
+                <h3 className="text-[11px] font-bold text-[#555] uppercase tracking-wider">Loaded Models</h3>
+                <button 
+                  onClick={() => {
+                    setModels(prev => prev.map(m => ({ ...m, quotaUsed: 0, status: 'idle' })));
+                    setSuccessMessage("Tüm model kotaları sıfırlandı.");
+                    setTimeout(() => setSuccessMessage(null), 3000);
+                  }}
+                  className="text-[9px] font-bold text-blue-500 hover:text-blue-400 uppercase tracking-tighter"
+                >
+                  Reset All
+                </button>
+              </div>
               <div className="space-y-1">
                 {[...models].sort((a, b) => b.tier - a.tier).map((model, idx) => (
                   <button
@@ -1371,7 +1356,23 @@ export default function App() {
             <div className={cn("h-4 w-[1px]", theme === 'dark' ? "bg-[#222]" : "bg-gray-200")} />
             <div className="flex items-center gap-2 text-[11px] text-[#666]">
               <Activity size={12} />
-              <span>Routing: <span className={cn(routingStatus === 'stable' ? "text-emerald-500" : "text-amber-500")}>{routingStatus.toUpperCase()}</span></span>
+              <span>Routing: <span className={cn(
+                routingStatus === 'stable' ? "text-emerald-500" : 
+                routingStatus === 'mining' ? "text-blue-500 animate-pulse" : "text-amber-500"
+              )}>{routingStatus.toUpperCase()}</span></span>
+            </div>
+
+            {/* Free Models Count Badge */}
+            <div className={cn(
+              "flex items-center gap-2 px-2.5 py-1 rounded-full border transition-all shadow-sm",
+              theme === 'dark' 
+                ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-400/90" 
+                : "bg-emerald-50 border-emerald-100 text-emerald-600"
+            )}>
+              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+              <span className="text-[10px] font-bold uppercase tracking-tight">
+                {models.filter(m => m.id.endsWith(':free') || m.name.toLowerCase().includes('free')).length} FREE
+              </span>
             </div>
           </div>
 
@@ -1385,6 +1386,17 @@ export default function App() {
               title="Clear Chat"
             >
               <Trash2 size={16} />
+            </button>
+            <button 
+              onClick={handleViewMemory}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
+                theme === 'dark' ? "bg-[#1A1A1A] border-[#2A2A2A] text-[#888] hover:text-[#CCC] hover:border-[#333]" : "bg-gray-50 border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              )}
+              title="View Global Memory Palace"
+            >
+              <Brain size={14} />
+              <span>Global Memory</span>
             </button>
             <button 
               onClick={() => setIsSmartRouting(!isSmartRouting)}
@@ -1833,7 +1845,7 @@ export default function App() {
                 <div className={cn(
                   "flex items-center gap-1 px-1 py-0.5 rounded text-[8px] font-bold uppercase tracking-tighter opacity-30",
                   theme === 'dark' ? "text-[#555]" : "text-gray-400"
-                )} title="memory.md aktif">
+                )} title="Hafıza Aktif">
                   <Database size={8} />
                   <span className="hidden sm:inline">MEM</span>
                 </div>
@@ -1952,6 +1964,74 @@ export default function App() {
               </div>
               
               <div className="p-6 space-y-6 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                {/* Global OpenRouter Config */}
+                <div className="space-y-4 p-5 border border-blue-500/20 rounded-2xl bg-blue-500/5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white">
+                        <Zap size={18} />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-white text-sm">OpenRouter API</h4>
+                        <p className="text-[10px] text-[#666] uppercase tracking-widest">Global Connection</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {providerStatuses.openrouter.status === 'active' && <span className="text-[10px] font-bold text-emerald-500 uppercase">Bağlandı</span>}
+                      {providerStatuses.openrouter.status === 'error' && <span className="text-[10px] font-bold text-red-500 uppercase">Hata</span>}
+                    </div>
+                  </div>
+                  
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="password"
+                        placeholder={serverConfig.hasOpenRouterKey ? "Sistem Anahtarı Aktif" : "OpenRouter API Key"}
+                        value={openRouterKey}
+                        onChange={(e) => setOpenRouterKey(e.target.value)}
+                        className="w-full bg-[#0B0B0B] border border-[#222] rounded-xl p-3 text-sm text-[#E0E0E0] focus:outline-none focus:border-blue-500/50 transition-all"
+                      />
+                      {serverConfig.hasOpenRouterKey && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          <ShieldCheck size={16} className="text-emerald-500/50" />
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={connectOpenRouter}
+                      disabled={isConnecting}
+                      className={cn(
+                        "px-6 rounded-xl font-bold text-xs uppercase tracking-widest transition-all",
+                        providerStatuses.openrouter.status === 'active' 
+                          ? "bg-emerald-600 text-white" 
+                          : providerStatuses.openrouter.status === 'error'
+                            ? "bg-red-600 text-white"
+                            : "bg-blue-600 text-white hover:bg-blue-500"
+                      )}
+                    >
+                      {isConnecting ? "..." : providerStatuses.openrouter.status === 'active' ? "OK" : "Connect"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between px-2">
+                  <div className="flex items-center gap-2 flex-1">
+                    <div className="h-px w-4 bg-[#1E1E1E]" />
+                    <span className="text-[10px] font-bold text-[#444] uppercase tracking-[0.2em]">Individual Models</span>
+                    <div className="h-px flex-1 bg-[#1E1E1E]" />
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setModels(INITIAL_MODELS);
+                      setSuccessMessage("Modeller varsayılan listeye geri döndürüldü.");
+                      setTimeout(() => setSuccessMessage(null), 3000);
+                    }}
+                    className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 uppercase tracking-tighter ml-2"
+                  >
+                    Restore Defaults
+                  </button>
+                </div>
+
                 {models.map(model => (
                   <div key={model.id} className="space-y-3 p-4 border border-[#1E1E1E] rounded-xl bg-[#0B0B0B] hover:border-[#2A2A2A] transition-colors">
                     <div className="flex items-center justify-between">
@@ -1974,9 +2054,7 @@ export default function App() {
                               ? (serverConfig.hasGeminiKey ? "Sistem Tarafından Yapılandırıldı" : "Gemini Anahtarı Eksik") 
                               : (model.provider === 'openrouter' && serverConfig.hasOpenRouterKey)
                                 ? "Sistem Tarafından Yapılandırıldı (Opsiyonel)"
-                                : (model.provider === 'openfang' && serverConfig.hasOpenFangKey)
-                                  ? "Sistem Tarafından Yapılandırıldı (Opsiyonel)"
-                                  : `Enter ${model.name} API Key`
+                                : `Enter ${model.name} API Key`
                           }
                           disabled={model.provider === 'gemini'}
                           value={model.apiKey || ''}
@@ -1986,9 +2064,9 @@ export default function App() {
                             model.provider === 'gemini' && !serverConfig.hasGeminiKey && "border-red-500/30"
                           )}
                         />
-                        {(model.provider === 'gemini' || (model.provider === 'openrouter' && serverConfig.hasOpenRouterKey) || (model.provider === 'openfang' && serverConfig.hasOpenFangKey)) && (
+                        {(model.provider === 'gemini' || (model.provider === 'openrouter' && serverConfig.hasOpenRouterKey)) && (
                           <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                            {(model.provider === 'gemini' ? serverConfig.hasGeminiKey : (model.provider === 'openrouter' ? serverConfig.hasOpenRouterKey : serverConfig.hasOpenFangKey)) ? (
+                            {(model.provider === 'gemini' ? serverConfig.hasGeminiKey : serverConfig.hasOpenRouterKey) ? (
                               <>
                                 <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-tighter">Aktif</span>
                                 <ShieldCheck size={16} className="text-emerald-500/50" />
@@ -2012,6 +2090,51 @@ export default function App() {
                   className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20"
                 >
                   Save Configuration
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+        {/* Memory Modal */}
+        {isMemoryModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className={cn(
+                "w-full max-w-4xl h-[80vh] flex flex-col rounded-2xl border shadow-2xl overflow-hidden",
+                theme === 'dark' ? "bg-[#0F0F0F] border-[#1E1E1E]" : "bg-white border-gray-200"
+              )}
+            >
+              <div className="p-6 border-b flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-600/10 rounded-lg">
+                    <Brain size={20} className="text-blue-500" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold">Uzun Süreli Hafıza (Memory)</h2>
+                    <p className="text-xs text-[#666]">Tüm modellerin ortak geçmişinden derlenen bağlam verileri.</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsMemoryModalOpen(false)}
+                  className="p-2 hover:bg-[#1A1A1A] rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6 font-mono text-sm leading-relaxed whitespace-pre-wrap">
+                {memoryContent}
+              </div>
+              
+              <div className="p-6 border-t flex justify-end shrink-0">
+                <button 
+                  onClick={() => setIsMemoryModalOpen(false)}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-500 transition-all"
+                >
+                  Kapat
                 </button>
               </div>
             </motion.div>
