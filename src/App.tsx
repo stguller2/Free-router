@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   MessageSquare, 
   Settings, 
-  Zap, 
   RefreshCw, 
   Send, 
   Bot, 
@@ -38,7 +37,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { AIService, SmartRouter, RoutingDecision } from './services/aiService';
+import { AIService } from './services/aiService';
 import { MemoryPalaceService } from './services/memoryPalaceService';
 import { MemPalace } from './services/mempalace/palace';
 import { AIModel, Message, ChatSession, ProviderState, ModelProvider, ProviderStatus } from './types';
@@ -118,7 +117,6 @@ export default function App() {
 
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isSmartRouting, setIsSmartRouting] = useState(true);
   const [isBackendRouting, setIsBackendRouting] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -571,26 +569,6 @@ export default function App() {
 
       let targetModelId = activeModelId;
       
-      // Proactive Routing (Frontend): If smart routing is on, try to pick the best model for the task
-      if (isSmartRouting && currentHistory.length === 0) {
-        const decision = await SmartRouter.route(finalPrompt, modelsRef.current);
-        if (decision && decision.modelId !== activeModelId) {
-          const suggestedModel = modelsRef.current.find(m => m.id === decision.modelId);
-          if (suggestedModel) {
-            setRoutingStatus('routing');
-            const routeMsg: Message = {
-              id: `route-${Date.now()}`,
-              role: 'system',
-              content: `🎯 **${decision.category}** tespiti yapıldı. ${decision.reason} En uygun model olan **${suggestedModel.name}** seçiliyor...`,
-              timestamp: Date.now(),
-            };
-            setMessages(prev => [...prev, routeMsg]);
-            setActiveModelId(decision.modelId, true);
-            targetModelId = decision.modelId;
-          }
-        }
-      }
-
       // Backend Routing: If backend routing is on, we let the server decide
       if (isBackendRouting) {
         setRoutingStatus('routing');
@@ -617,76 +595,12 @@ export default function App() {
         attachments
       });
 
-      if (isSmartRouting) {
-        setRoutingStatus('routing');
-        let currentFailedModelId = activeModelId;
-        let exhaustedIds = [activeModelId];
-        let lastError = err;
-
-        // Try to find and use next models until success or exhaustion
-        while (true) {
-          const isQuotaError = lastError.message === 'QUOTA_EXCEEDED' || 
-                               (lastError.message && lastError.message.toLowerCase().includes('limit'));
-          
-          setModels(prev => prev.map(m => m.id === currentFailedModelId ? { 
-            ...m, 
-            status: isQuotaError ? 'exhausted' : 'error' 
-          } : m));
-          
-          const currentModel = modelsRef.current.find(m => m.id === currentFailedModelId);
-          const nextModel = findNextAvailableModel(exhaustedIds);
-
-          if (!nextModel) {
-            setRoutingStatus('exhausted');
-            setError("Kullanılabilir başka model bulunamadı veya tüm modellerin kotası doldu.");
-            break;
-          }
-
-          exhaustedIds.push(nextModel.id);
-          let reason = "bağlantı hatası verdi";
-          if (lastError.message === 'QUOTA_EXCEEDED') reason = "kotası doldu";
-          else if (lastError.message === 'TIMEOUT') reason = "zaman aşımına uğradı";
-
-          const systemMsg: Message = {
-            id: `sys-${Date.now()}`,
-            role: 'system',
-            content: `🔄 ${currentModel?.name || 'Model'} ${reason}. Otomatik olarak ${nextModel.name} modeline geçiliyor...`,
-            timestamp: Date.now(),
-          };
-          
-          setMessages(prev => [...prev, systemMsg]);
-          setActiveModelId(nextModel.id, true);
-          
-          try {
-            // We need to pass the actual model object or data because models state is stale here
-            await attemptAIRequest(finalPrompt, nextModel.id, currentHistory, attachments, abortControllerRef.current?.signal);
-            setRoutingStatus('stable');
-            setLastFailedRequest(null);
-            break;
-          } catch (retryErr: any) {
-            if (retryErr.message === 'ABORTED') {
-              setIsLoading(false);
-              return;
-            }
-            currentFailedModelId = nextModel.id;
-            lastError = retryErr;
-            setLastFailedRequest({
-              prompt: finalPrompt,
-              modelId: nextModel.id,
-              history: currentHistory,
-              attachments
-            });
-            // Continue loop to try next model
-          }
-        }
-      } else {
-        let errorMsg = err.message || "Bilinmeyen bir hata oluştu.";
-        if (err.message === 'QUOTA_EXCEEDED') errorMsg = "Modelin kullanım kotası doldu. Lütfen başka bir model seçin veya daha sonra tekrar deneyin.";
-        else if (err.message === 'TIMEOUT') errorMsg = "İstek zaman aşımına uğradı. Model şu an çok yoğun olabilir.";
-        else if (err.name === 'AbortError' || err.message === 'ABORTED') errorMsg = "İstek iptal edildi.";
-        
-        setError(errorMsg);
-      }
+      let errorMsg = err.message || "Bilinmeyen bir hata oluştu.";
+      if (err.message === 'QUOTA_EXCEEDED') errorMsg = "Modelin kullanım kotası doldu. Lütfen başka bir model seçin veya daha sonra tekrar deneyin.";
+      else if (err.message === 'TIMEOUT') errorMsg = "İstek zaman aşımına uğradı. Model şu an çok yoğun olabilir.";
+      else if (err.name === 'AbortError' || err.message === 'ABORTED') errorMsg = "İstek iptal edildi.";
+      
+      setError(errorMsg);
     } finally {
       setIsLoading(false);
     }
@@ -809,61 +723,12 @@ export default function App() {
 
       setLastFailedRequest({ prompt, modelId, history, attachments });
 
-      if (isSmartRouting) {
-        setRoutingStatus('routing');
-        let currentFailedModelId = modelId;
-        let exhaustedIds = [modelId];
-        let lastError = err;
+      let errorMsg = err.message || "Bilinmeyen bir hata oluştu.";
+      if (err.message === 'QUOTA_EXCEEDED') errorMsg = "Modelin kullanım kotası doldu. Lütfen başka bir model seçin veya daha sonra tekrar deneyin.";
+      else if (err.message === 'TIMEOUT') errorMsg = "İstek zaman aşımına uğradı. Model şu an çok yoğun olabilir.";
+      else if (err.name === 'AbortError' || err.message === 'ABORTED') errorMsg = "İstek iptal edildi.";
 
-        while (true) {
-          setModels(prev => prev.map(m => m.id === currentFailedModelId ? { ...m, status: 'exhausted' } : m));
-          const currentModel = modelsRef.current.find(m => m.id === currentFailedModelId);
-          const nextModel = findNextAvailableModel(exhaustedIds);
-
-          if (!nextModel) {
-            setRoutingStatus('exhausted');
-            setError("Kullanılabilir başka model bulunamadı veya tüm modellerin kotası doldu.");
-            break;
-          }
-
-          exhaustedIds.push(nextModel.id);
-          let reason = "bağlantı hatası verdi";
-          if (lastError.message === 'QUOTA_EXCEEDED') reason = "kotası doldu";
-          else if (lastError.message === 'TIMEOUT') reason = "zaman aşımına uğradı";
-
-          const systemMsg: Message = {
-            id: `sys-${Date.now()}`,
-            role: 'system',
-            content: `🔄 ${currentModel?.name || 'Model'} ${reason}. Otomatik olarak ${nextModel.name} modeline geçiliyor...`,
-            timestamp: Date.now(),
-          };
-          
-          setMessages(prev => [...prev, systemMsg]);
-          setActiveModelId(nextModel.id, true);
-          
-          try {
-            await attemptAIRequest(prompt, nextModel.id, history, attachments, abortControllerRef.current?.signal);
-            setRoutingStatus('stable');
-            setLastFailedRequest(null);
-            break;
-          } catch (retryErr: any) {
-            if (retryErr.message === 'ABORTED') {
-              setIsLoading(false);
-              return;
-            }
-            currentFailedModelId = nextModel.id;
-            lastError = retryErr;
-            setLastFailedRequest({ prompt, modelId: nextModel.id, history, attachments });
-          }
-        }
-      } else {
-        let errorMsg = err.message || "Bilinmeyen bir hata oluştu.";
-        if (err.message === 'QUOTA_EXCEEDED') errorMsg = "Modelin kullanım kotası doldu. Lütfen başka bir model seçin veya daha sonra tekrar deneyin.";
-        else if (err.message === 'TIMEOUT') errorMsg = "İstek zaman aşımına uğradı. Model şu an çok yoğun olabilir.";
-        else if (err.name === 'AbortError' || err.message === 'ABORTED') errorMsg = "İstek iptal edildi.";
-
-        setError(errorMsg);
-      }
+      setError(errorMsg);
     } finally {
       setIsLoading(false);
     }
@@ -949,7 +814,7 @@ export default function App() {
         )}>
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center">
-              <Zap size={14} className="text-white fill-white" />
+              <Bot size={14} className="text-white" />
             </div>
             <span className="font-bold text-sm tracking-tight">Free Router</span>
           </div>
@@ -1420,24 +1285,7 @@ export default function App() {
             </button>
             <button 
               onClick={() => {
-                setIsSmartRouting(!isSmartRouting);
-                if (!isSmartRouting) setIsBackendRouting(false);
-              }}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
-                isSmartRouting 
-                  ? "bg-emerald-600/10 border-emerald-500/30 text-emerald-400" 
-                  : (theme === 'dark' ? "bg-[#1A1A1A] border-[#2A2A2A] text-[#888] hover:text-[#CCC] hover:border-[#333]" : "bg-gray-50 border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300")
-              )}
-              title="Frontend Smart Routing"
-            >
-              <Zap size={14} />
-              <span>Smart Routing</span>
-            </button>
-            <button 
-              onClick={() => {
                 setIsBackendRouting(!isBackendRouting);
-                if (!isBackendRouting) setIsSmartRouting(false);
               }}
               className={cn(
                 "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
@@ -2008,7 +1856,7 @@ export default function App() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white">
-                        <Zap size={18} />
+                        <Bot size={18} />
                       </div>
                       <div>
                         <h4 className="font-bold text-white text-sm">OpenRouter API</h4>
