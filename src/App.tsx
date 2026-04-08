@@ -31,7 +31,8 @@ import {
   Database,
   Square,
   Search,
-  Brain
+  Brain,
+  Server
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
@@ -118,6 +119,7 @@ export default function App() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSmartRouting, setIsSmartRouting] = useState(true);
+  const [isBackendRouting, setIsBackendRouting] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -569,8 +571,7 @@ export default function App() {
 
       let targetModelId = activeModelId;
       
-      // Proactive Routing: If smart routing is on, try to pick the best model for the task
-      // Only run proactive routing for the FIRST message of a session to maintain context stability
+      // Proactive Routing (Frontend): If smart routing is on, try to pick the best model for the task
       if (isSmartRouting && currentHistory.length === 0) {
         const decision = await SmartRouter.route(finalPrompt, modelsRef.current);
         if (decision && decision.modelId !== activeModelId) {
@@ -588,6 +589,18 @@ export default function App() {
             targetModelId = decision.modelId;
           }
         }
+      }
+
+      // Backend Routing: If backend routing is on, we let the server decide
+      if (isBackendRouting) {
+        setRoutingStatus('routing');
+        const routeMsg: Message = {
+          id: `route-backend-${Date.now()}`,
+          role: 'system',
+          content: `⚙️ **Backend Görev Dağıtıcı** devrede. İstek sunucu tarafında analiz ediliyor ve en uygun modele atanıyor...`,
+          timestamp: Date.now(),
+        };
+        setMessages(prev => [...prev, routeMsg]);
       }
 
       await attemptAIRequest(finalPrompt, targetModelId, currentHistory, attachments, abortControllerRef.current?.signal);
@@ -713,8 +726,14 @@ export default function App() {
 
     const startTime = Date.now();
     let responseText = "";
+    let actualModelId = modelId;
+
     try {
-      if (model.provider === 'gemini') {
+      if (isBackendRouting) {
+        const result = await AIService.callSmartChat(prompt, history, finalSystemPrompt, signal);
+        responseText = result.text;
+        actualModelId = result.routedTo || modelId;
+      } else if (model.provider === 'gemini') {
         responseText = await AIService.callGemini(prompt, history, finalSystemPrompt, attachments, signal);
       } else if (model.provider === 'openrouter' && (model.apiKey || openRouterKey || serverConfig.hasOpenRouterKey)) {
         const key = model.apiKey || openRouterKey || 'SYSTEM';
@@ -737,7 +756,8 @@ export default function App() {
       const durationSeconds = (endTime - startTime) / 1000;
       const latencyMs = endTime - startTime;
       
-      updateProviderStatus(model.provider, latencyMs > 5000 ? 'slow' : 'active', latencyMs);
+      const finalModel = modelsRef.current.find(m => m.id === actualModelId) || model;
+      updateProviderStatus(finalModel.provider, latencyMs > 5000 ? 'slow' : 'active', latencyMs);
 
       const estimatedTokens = responseText.length / 4; // Rough heuristic
       const speed = durationSeconds > 0 ? Math.round(estimatedTokens / durationSeconds) : 0;
@@ -748,7 +768,7 @@ export default function App() {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: responseText,
-        modelId: modelId,
+        modelId: actualModelId,
         timestamp: Date.now(),
       };
 
@@ -1399,17 +1419,36 @@ export default function App() {
               <span>Global Memory</span>
             </button>
             <button 
-              onClick={() => setIsSmartRouting(!isSmartRouting)}
+              onClick={() => {
+                setIsSmartRouting(!isSmartRouting);
+                if (!isSmartRouting) setIsBackendRouting(false);
+              }}
               className={cn(
                 "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
                 isSmartRouting 
                   ? "bg-emerald-600/10 border-emerald-500/30 text-emerald-400" 
                   : (theme === 'dark' ? "bg-[#1A1A1A] border-[#2A2A2A] text-[#888] hover:text-[#CCC] hover:border-[#333]" : "bg-gray-50 border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300")
               )}
-              title="Automatic Model Switching"
+              title="Frontend Smart Routing"
             >
               <Zap size={14} />
               <span>Smart Routing</span>
+            </button>
+            <button 
+              onClick={() => {
+                setIsBackendRouting(!isBackendRouting);
+                if (!isBackendRouting) setIsSmartRouting(false);
+              }}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
+                isBackendRouting 
+                  ? "bg-purple-600/10 border-purple-500/30 text-purple-400" 
+                  : (theme === 'dark' ? "bg-[#1A1A1A] border-[#2A2A2A] text-[#888] hover:text-[#CCC] hover:border-[#333]" : "bg-gray-50 border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300")
+              )}
+              title="Backend Task Distribution"
+            >
+              <Server size={14} />
+              <span>Backend Routing</span>
             </button>
             <button 
               onClick={() => setShowSystemPrompt(!showSystemPrompt)}

@@ -39,6 +39,29 @@ export class AIService {
     return data.text;
   }
 
+  static async callSmartChat(prompt: string, history?: Message[], systemInstruction?: string, signal?: AbortSignal) {
+    const response = await fetch("/api/ai/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prompt, history, systemInstruction }),
+      signal
+    });
+
+    if (response.status === 429) throw new Error("QUOTA_EXCEEDED");
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || "Sunucu Hatası");
+    }
+
+    const data = await response.json();
+    return {
+      text: data.text,
+      routedTo: data.routedTo
+    };
+  }
+
   static async callGemini(prompt: string, history?: Message[], systemInstruction?: string, attachments?: { data: string, mimeType: string }[], signal?: AbortSignal) {
     const ai = this.getGemini();
     
@@ -206,8 +229,9 @@ export class SmartRouter {
       let score = 0;
       cat.keywords.forEach(kw => {
         if (p.includes(kw)) score += 1;
-        // Exact word match bonus
-        if (new RegExp(`\\b${kw}\\b`).test(p)) score += 2;
+        // Exact word match bonus - escape special characters like c++
+        const escapedKw = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp(`\\b${escapedKw}\\b`).test(p)) score += 2;
       });
       scores[key] = score;
     });
