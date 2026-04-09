@@ -226,29 +226,36 @@ export default function App() {
     fetchInitialData();
   }, []);
 
-  // Periodic cleanup of exhausted free models (every 5 minutes)
+  // Periodic cleanup of exhausted models (every 1 minute)
   useEffect(() => {
     const cleanupInterval = setInterval(() => {
       setModels(prev => {
-        const filtered = prev.filter(m => {
-          // If it's a free model and it's exhausted or has error, remove it
-          const isFree = m.id.includes(':free') || m.name.toLowerCase().includes('free');
-          const isExhausted = m.status === 'exhausted' || m.status === 'error';
-          
-          // Keep it if it's not both free and exhausted/error
-          return !(isFree && isExhausted);
-        });
+        const exhaustedIds = prev.filter(m => m.status === 'exhausted').map(m => m.id);
+        if (exhaustedIds.length === 0) return prev;
+
+        const filtered = prev.filter(m => m.status !== 'exhausted');
         
-        if (filtered.length !== prev.length) {
-          console.log(`[Cleanup] Removed ${prev.length - filtered.length} exhausted free models.`);
-        }
+        console.log(`[Cleanup] Removed ${exhaustedIds.length} exhausted models:`, exhaustedIds);
         
+        // If active model is removed, we should ideally switch it in sessions
+        // but since sessions is a separate state, we handle it in the next effect or here
         return filtered;
       });
-    }, 300000); // 5 minutes
+    }, 60000); // 1 minute
     
     return () => clearInterval(cleanupInterval);
   }, []);
+
+  // Sync active model if it was removed by cleanup
+  useEffect(() => {
+    const currentModel = models.find(m => m.id === activeModelId);
+    if (!currentModel && models.length > 0) {
+      const nextModel = models.sort((a, b) => b.tier - a.tier)[0];
+      if (nextModel) {
+        setActiveModelId(nextModel.id, true);
+      }
+    }
+  }, [models, activeModelId]);
 
   const [lastFailedRequest, setLastFailedRequest] = useState<{
     prompt: string;
@@ -511,6 +518,7 @@ export default function App() {
         !excludeIds.includes(m.id) && 
         m.isAvailable && 
         m.status !== 'exhausted' && 
+        m.status !== 'error' && 
         m.quotaUsed < m.quotaLimit
       )
       .sort((a, b) => b.tier - a.tier)[0];
@@ -568,20 +576,45 @@ export default function App() {
       setAttachedFile(null);
 
       let targetModelId = activeModelId;
-      
-      // Backend Routing: If backend routing is on, we let the server decide
-      if (isBackendRouting) {
-        setRoutingStatus('routing');
-        const routeMsg: Message = {
-          id: `route-backend-${Date.now()}`,
-          role: 'system',
-          content: `⚙️ **Backend Görev Dağıtıcı** devrede. İstek sunucu tarafında analiz ediliyor ve en uygun modele atanıyor...`,
-          timestamp: Date.now(),
-        };
-        setMessages(prev => [...prev, routeMsg]);
-      }
+      let attemptCount = 0;
+      const maxAttempts = 5;
+      const triedModelIds: string[] = [];
 
-      await attemptAIRequest(finalPrompt, targetModelId, currentHistory, attachments, abortControllerRef.current?.signal);
+      while (attemptCount < maxAttempts) {
+        try {
+          triedModelIds.push(targetModelId);
+          await attemptAIRequest(finalPrompt, targetModelId, currentHistory, attachments, triedModelIds, abortControllerRef.current?.signal);
+          // If successful, break the loop
+          break;
+        } catch (err: any) {
+          attemptCount++;
+          
+          if (err.message === 'ABORTED' || err.name === 'AbortError') {
+            throw err;
+          }
+
+          // If we have more attempts, try to find a fallback model
+          if (attemptCount < maxAttempts) {
+            const nextModel = findNextAvailableModel(triedModelIds);
+            if (nextModel) {
+              const failoverMsg: Message = {
+                id: `failover-${Date.now()}`,
+                role: 'system',
+                content: `⚠️ **Otomatik Yönlendirme:** ${models.find(m => m.id === targetModelId)?.name || targetModelId} hata verdi (${err.message.slice(0, 50)}...). ${nextModel.name} modeline otomatik geçiş yapılıyor...`,
+                timestamp: Date.now(),
+              };
+              setMessages(prev => [...prev, failoverMsg]);
+              targetModelId = nextModel.id;
+              setActiveModelId(nextModel.id, true); // Update active model silently
+              setRoutingStatus('routing');
+              continue;
+            }
+          }
+          
+          // If no fallback found or max attempts reached, rethrow
+          throw err;
+        }
+      }
     } catch (err: any) {
       if (err.message === 'ABORTED') {
         setIsLoading(false);
@@ -606,7 +639,7 @@ export default function App() {
     }
   };
 
-  const attemptAIRequest = async (prompt: string, modelId: string, history: Message[], attachments?: { data: string, mimeType: string }[], signal?: AbortSignal) => {
+  const attemptAIRequest = async (prompt: string, modelId: string, history: Message[], attachments?: { data: string, mimeType: string }[], excludeIds: string[] = [], signal?: AbortSignal) => {
     const model = modelsRef.current.find(m => m.id === modelId)!;
     
     // Check local quota before calling API
@@ -644,7 +677,7 @@ export default function App() {
 
     try {
       if (isBackendRouting) {
-        const result = await AIService.callSmartChat(prompt, history, finalSystemPrompt, signal);
+        const result = await AIService.callSmartChat(prompt, history, finalSystemPrompt, excludeIds, signal);
         responseText = result.text;
         actualModelId = result.routedTo || modelId;
       } else if (model.provider === 'gemini') {
@@ -690,9 +723,18 @@ export default function App() {
       setModels(prev => prev.map(m => 
         m.id === modelId ? { ...m, quotaUsed: m.quotaUsed + 1, status: 'idle' } : m
       ));
-    } catch (error) {
+    } catch (error: any) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const isQuotaError = errorMsg.includes('QUOTA_EXCEEDED') || 
+                          errorMsg.toLowerCase().includes('insufficient credits') || 
+                          errorMsg.toLowerCase().includes('rate limit') ||
+                          errorMsg.toLowerCase().includes('credit');
+      
       updateProviderStatus(model.provider, 'error');
-      setModels(prev => prev.map(m => m.id === modelId ? { ...m, status: error instanceof Error && error.message === 'QUOTA_EXCEEDED' ? 'exhausted' : 'error' } : m));
+      setModels(prev => prev.map(m => m.id === modelId ? { 
+        ...m, 
+        status: isQuotaError ? 'exhausted' : 'error' 
+      } : m));
       throw error;
     }
   };
@@ -714,7 +756,39 @@ export default function App() {
     setRoutingStatus('stable');
 
     try {
-      await attemptAIRequest(prompt, modelId, history, attachments, abortControllerRef.current?.signal);
+      let targetModelId = modelId;
+      let attemptCount = 0;
+      const maxAttempts = 5;
+      const triedModelIds: string[] = [];
+
+      while (attemptCount < maxAttempts) {
+        try {
+          triedModelIds.push(targetModelId);
+          await attemptAIRequest(prompt, targetModelId, history, attachments, triedModelIds, abortControllerRef.current?.signal);
+          break;
+        } catch (err: any) {
+          attemptCount++;
+          if (err.message === 'ABORTED' || err.name === 'AbortError') throw err;
+
+          if (attemptCount < maxAttempts) {
+            const nextModel = findNextAvailableModel(triedModelIds);
+            if (nextModel) {
+              const failoverMsg: Message = {
+                id: `failover-retry-${Date.now()}`,
+                role: 'system',
+                content: `⚠️ **Yeniden Deneme Yönlendirmesi:** ${models.find(m => m.id === targetModelId)?.name || targetModelId} yine hata verdi (${err.message.slice(0, 50)}...). ${nextModel.name} deneniyor...`,
+                timestamp: Date.now(),
+              };
+              setMessages(prev => [...prev, failoverMsg]);
+              targetModelId = nextModel.id;
+              setActiveModelId(nextModel.id, true);
+              setRoutingStatus('routing');
+              continue;
+            }
+          }
+          throw err;
+        }
+      }
     } catch (err: any) {
       if (err.message === 'ABORTED') {
         setIsLoading(false);

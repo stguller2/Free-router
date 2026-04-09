@@ -35,9 +35,17 @@ export const BACKEND_ROUTING_CATEGORIES = {
 };
 
 export class BackendRouter {
-  static decideModel(prompt: string, availableModels: AIModel[]): RoutingDecision {
+  static decideModel(prompt: string, availableModels: AIModel[], excludeIds: string[] = []): RoutingDecision {
     const p = prompt.toLowerCase();
     const scores: Record<string, number> = {};
+
+    const filteredModels = availableModels.filter(m => !excludeIds.includes(m.id));
+    if (filteredModels.length === 0 && availableModels.length > 0) {
+      // If all models are excluded, fallback to any available model as a last resort
+      // but ideally we should have something.
+    }
+
+    const modelsToUse = filteredModels.length > 0 ? filteredModels : availableModels;
 
     // 1. Keyword Scoring
     Object.entries(BACKEND_ROUTING_CATEGORIES).forEach(([key, cat]) => {
@@ -56,7 +64,7 @@ export class BackendRouter {
 
     // If we have a clear category match
     if (scores[bestCategoryKey] > 0) {
-      const targetModels = availableModels.filter(m => 
+      const targetModels = modelsToUse.filter(m => 
         bestCategory.targets.some((t: string) => m.id.toLowerCase().includes(t.toLowerCase())) && 
         m.isAvailable
       );
@@ -74,8 +82,8 @@ export class BackendRouter {
     }
 
     // 2. Default Fallback (Strongest available model)
-    const fallbackModels = availableModels.filter(m => m.isAvailable);
-    const bestFallback = fallbackModels.sort((a, b) => b.tier - a.tier)[0] || availableModels[0];
+    const fallbackModels = modelsToUse.filter(m => m.isAvailable);
+    const bestFallback = fallbackModels.sort((a, b) => b.tier - a.tier)[0] || modelsToUse[0];
 
     return {
       modelId: bestFallback.id,
