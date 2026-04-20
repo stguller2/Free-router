@@ -1,79 +1,62 @@
-# Free AI Router Hub
+# 🚀 Free Router
 
-A sophisticated, full-stack AI model aggregation platform that provides intelligent routing, memory persistence, and real-time access to various AI providers, with a special focus on free-tier models.
+Ücretsiz yapay zeka modellerini tek bir arayüzden yönetmenizi sağlayan, akıllı yönlendirme ve gelişmiş hafıza sistemine sahip tam kapsamlı bir AI platformu.
 
 ![App Screenshot](https://picsum.photos/seed/ai-hub/1200/600)
 
-## 🚀 Features
+## ✨ Öne Çıkan Özellikler
 
-- **Multi-Provider Integration**: Support for Gemini, OpenAI, Anthropic, DeepSeek, Groq, Mistral, and OpenRouter.
-- **Backend Intelligent Routing**: A server-side decision engine that analyzes prompts to select the most suitable model based on task category (Coding, Logic, Creative, Fast).
-- **Dynamic Model Sync**: Automatically synchronizes and discovers new free-tier models from OpenRouter every 24 hours.
-- **Memory Palace**: Persistent memory system that allows models to maintain context across sessions, with both model-specific and global memory stores.
-- **Advanced UI/UX**:
-  - Polished Dark/Light mode support.
-  - Real-time token speed monitoring.
-  - File attachment support.
-  - Voice recording interface.
-  - Responsive sidebar for session and model management.
-- **Quota Management**: Built-in tracking for model usage and limits.
+- **Çoklu Sağlayıcı Desteği**: Gemini, OpenAI, Anthropic, DeepSeek, Groq, Mistral ve OpenRouter entegrasyonu.
+- **🛡️ Akıllı Failover (Hata Toleransı)**: Bir model hata verdiğinde (bakiye yetersizliği, kota dolumu vb.) sistem otomatik olarak en uygun alternatif modeli bulur ve isteği kesintisiz devam ettirir.
+- **🧠 Hafıza Sarayı (Memory Palace)**: Tüm modellerle olan geçmiş etkileşimlerinizi analiz eden ve ortak bir bağlam oluşturan gelişmiş JSON tabanlı hafıza sistemi.
+- **⚙️ Backend Akıllı Yönlendirici**: İstekleriniz içeriğine göre (Yazılım, Mantık, Yaratıcı, Hızlı Yanıt) analiz edilir ve en başarılı modele otomatik yönlendirilir.
+- **🧹 Otomatik Temizlik**: Kredisi biten veya hata veren modeller listeden her dakika otomatik olarak temizlenir, liste her zaman güncel kalır.
+- **🔄 Dinamik Model Senkronizasyonu**: OpenRouter üzerindeki yeni ücretsiz modeller 24 saatte bir otomatik olarak taranır ve sisteme eklenir.
 
-## 🛠️ Tech Stack
+## 🛠️ Teknoloji Yığını
 
-- **Frontend**: React 18, TypeScript, Tailwind CSS, Lucide Icons, Framer Motion.
-- **Backend**: Node.js, Express.
-- **AI Integration**: Google Generative AI SDK, OpenRouter API, and direct provider proxies.
+- **Frontend**: React 19, TypeScript, Tailwind CSS, Framer Motion.
+- **Backend**: Express.js, Tsx.
+- **AI**: Google Generative AI SDK (@google/genai), OpenRouter API.
 
-## 📦 Installation
+## ⌨️ Klavye Kısayolları
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/yourusername/free-ai-router.git
-   cd free-ai-router
-   ```
+| Kısayol | İşlev |
+| :--- | :--- |
+| `Alt + R` | Tüm model kotalarını sıfırla |
+| `Alt + 1-9` | Modeller arasında hızlı geçiş yap |
+| `Ctrl + Enter` | Mesajı gönder |
 
-2. **Install dependencies**:
+## 🚀 Başlangıç
+
+1. **Bağımlılıkları Yükleyin**:
    ```bash
    npm install
    ```
 
-3. **Configure Environment Variables**:
-   Create a `.env` file in the root directory and add your API keys:
+2. **Çevre Değişkenlerini Ayarlayın**:
+   `.env.example` dosyasını baz alarak bir `.env` dosyası oluşturun ve API anahtarlarınızı ekleyin:
    ```env
-   GEMINI_API_KEY=your_gemini_key
-   OPENROUTER_API_KEY=your_openrouter_key
-   # Optional:
-   OPENAI_API_KEY=...
-   ANTHROPIC_API_KEY=...
-   DEEPSEEK_API_KEY=...
-   GROQ_API_KEY=...
-   MISTRAL_API_KEY=...
+   GEMINI_API_KEY=...
+   OPENROUTER_API_KEY=...
    ```
 
-4. **Start the development server**:
+3. **Geliştirme Sunucusunu Başlatın**:
    ```bash
    npm run dev
    ```
 
-## 🤖 Backend Routing Logic
+## 🤖 Yönlendirme Kategorileri
 
-The system categorizes incoming prompts into four main areas:
-- **Coding**: Technical tasks, debugging, and script generation.
-- **Logic**: Mathematical problems, complex analysis, and strategic planning.
-- **Creative**: Storytelling, content creation, and creative writing.
-- **Fast**: Quick summaries, translations, and general queries.
+Sistem, istemlerinizi şu kategorilere göre puanlar:
+- **Yazılım ve Teknik**: Kodlama, hata ayıklama.
+- **Mantık ve Analiz**: Karmaşık problemler, matematik.
+- **Yaratıcı Yazım**: Hikaye, içerik üretimi.
+- **Hızlı Yanıt**: Özetleme, kısa sorular.
 
-It then selects the highest-tier available model assigned to that specific category.
+## 🧠 Hafıza Yönetimi
 
-## 🧠 Memory System
-
-The application uses a file-based memory system stored in the `/memories` directory. 
-- `memory.md`: Global context shared across all models.
-- `memory_{modelId}.md`: Specific context for individual models to maintain their unique "personality" or specialized knowledge.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Uygulama `/memories` dizininde dosya tabanlı bir saklama alanı kullanır. Veriler `MemPalace` sınıfı üzerinden JSON formatında işlenir ve modellerin "uzun süreli hafızası" olarak sistem talimatlarına (System Prompt) enjekte edilir.
 
 ---
 
