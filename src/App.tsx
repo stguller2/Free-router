@@ -257,6 +257,12 @@ export default function App() {
     }
   }, [models, activeModelId]);
 
+  // Effect to sync theme with document and localStorage
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
   const [lastFailedRequest, setLastFailedRequest] = useState<{
     prompt: string;
     modelId: string;
@@ -1347,6 +1353,16 @@ export default function App() {
               <Trash2 size={16} />
             </button>
             <button 
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className={cn(
+                "p-2 rounded-md transition-colors",
+                theme === 'dark' ? "hover:bg-[#222] text-[#777] hover:text-yellow-500" : "hover:bg-gray-100 text-gray-400 hover:text-blue-600"
+              )}
+              title={theme === 'dark' ? "Açık Mod" : "Koyu Mod"}
+            >
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+            <button 
               onClick={handleViewMemory}
               className={cn(
                 "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
@@ -1907,26 +1923,35 @@ export default function App() {
               initial={{ scale: 0.95, opacity: 0, y: 20 }} 
               animate={{ scale: 1, opacity: 1, y: 0 }} 
               exit={{ scale: 0.95, opacity: 0, y: 20 }} 
-              className="relative w-full max-w-2xl bg-[#0F0F0F] border border-[#1E1E1E] rounded-2xl shadow-2xl overflow-hidden"
+              className={cn(
+                "relative w-full max-w-2xl border rounded-2xl shadow-2xl overflow-hidden",
+                theme === 'dark' ? "bg-[#0F0F0F] border-[#1E1E1E]" : "bg-white border-gray-100"
+              )}
             >
-              <div className="p-6 border-b border-[#1E1E1E] flex items-center justify-between bg-[#161616]">
+              <div className={cn(
+                "p-6 border-b flex items-center justify-between",
+                theme === 'dark' ? "border-[#1E1E1E] bg-[#161616]" : "bg-gray-50 border-gray-100"
+              )}>
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-blue-600/20 rounded-lg text-blue-500">
                     <Settings size={20} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-lg text-white">Model Configuration</h3>
+                    <h3 className={cn("font-bold text-lg", theme === 'dark' ? "text-white" : "text-gray-900")}>Model Configuration</h3>
                     <p className="text-xs text-[#666]">Manage API keys and model availability</p>
                   </div>
                 </div>
-                <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-[#222] rounded-full transition-colors text-[#555] hover:text-white">
+                <button onClick={() => setShowSettings(false)} className={cn("p-2 rounded-full transition-colors", theme === 'dark' ? "hover:bg-[#222] text-[#555] hover:text-white" : "hover:bg-gray-100 text-gray-400 hover:text-gray-900")}>
                   <X size={20} />
                 </button>
               </div>
               
               <div className="p-6 space-y-6 max-h-[60vh] overflow-y-auto custom-scrollbar">
                 {/* Global OpenRouter Config */}
-                <div className="space-y-4 p-5 border border-blue-500/20 rounded-2xl bg-blue-500/5">
+                <div className={cn(
+                  "space-y-4 p-5 border rounded-2xl",
+                  theme === 'dark' ? "border-blue-500/20 bg-blue-500/5" : "border-blue-100 bg-blue-50/50"
+                )}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white">
@@ -1977,9 +2002,9 @@ export default function App() {
 
                 <div className="flex items-center justify-between px-2">
                   <div className="flex items-center gap-2 flex-1">
-                    <div className="h-px w-4 bg-[#1E1E1E]" />
-                    <span className="text-[10px] font-bold text-[#444] uppercase tracking-[0.2em]">Individual Models</span>
-                    <div className="h-px flex-1 bg-[#1E1E1E]" />
+                    <div className={cn("h-px w-4", theme === 'dark' ? "bg-[#1E1E1E]" : "bg-gray-200")} />
+                    <span className={cn("text-[10px] font-bold uppercase tracking-[0.2em]", theme === 'dark' ? "text-[#444]" : "text-gray-400")}>Individual Models</span>
+                    <div className={cn("h-px flex-1", theme === 'dark' ? "bg-[#1E1E1E]" : "bg-gray-200")} />
                   </div>
                   <button 
                     onClick={() => {
@@ -1994,11 +2019,14 @@ export default function App() {
                 </div>
 
                 {models.map(model => (
-                  <div key={model.id} className="space-y-3 p-4 border border-[#1E1E1E] rounded-xl bg-[#0B0B0B] hover:border-[#2A2A2A] transition-colors">
+                  <div key={model.id} className={cn(
+                    "space-y-3 p-4 border rounded-xl transition-colors",
+                    theme === 'dark' ? "border-[#1E1E1E] bg-[#0B0B0B] hover:border-[#2A2A2A]" : "border-gray-100 bg-gray-50/50 hover:border-gray-200"
+                  )}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-[#888] uppercase tracking-wider">{model.provider}</span>
-                        <span className="text-sm font-medium text-[#CCC]">{model.name}</span>
+                        <span className={cn("text-xs font-bold uppercase tracking-wider", theme === 'dark' ? "text-[#888]" : "text-gray-400")}>{model.provider}</span>
+                        <span className={cn("text-sm font-medium", theme === 'dark' ? "text-[#CCC]" : "text-gray-700")}>{model.name}</span>
                       </div>
                       <button 
                         onClick={() => setModels(prev => prev.map(m => m.id === model.id ? { ...m, quotaUsed: 0, status: 'idle' } : m))} 
@@ -2021,7 +2049,10 @@ export default function App() {
                           value={model.apiKey || ''}
                           onChange={(e) => updateApiKey(model.id, e.target.value)}
                           className={cn(
-                            "w-full bg-[#161616] border border-[#222] rounded-lg p-3 text-sm text-[#E0E0E0] focus:outline-none focus:border-blue-500/50 transition-all disabled:opacity-30 placeholder:text-[#333]",
+                            "w-full rounded-lg p-3 text-sm focus:outline-none transition-all disabled:opacity-30",
+                            theme === 'dark' 
+                              ? "bg-[#161616] border border-[#222] text-[#E0E0E0] focus:border-blue-500/50 placeholder:text-[#333]" 
+                              : "bg-white border border-gray-200 text-gray-900 focus:border-blue-400 placeholder:text-gray-300",
                             model.provider === 'gemini' && !serverConfig.hasGeminiKey && "border-red-500/30"
                           )}
                         />
@@ -2045,7 +2076,10 @@ export default function App() {
                 ))}
               </div>
               
-              <div className="p-6 bg-[#161616] border-t border-[#1E1E1E] flex justify-end gap-3">
+              <div className={cn(
+                "p-6 border-t flex justify-end gap-3",
+                theme === 'dark' ? "bg-[#161616] border-[#1E1E1E]" : "bg-gray-50 border-gray-100"
+              )}>
                 <button 
                   onClick={() => setShowSettings(false)} 
                   className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20"
@@ -2080,17 +2114,23 @@ export default function App() {
                 </div>
                 <button 
                   onClick={() => setIsMemoryModalOpen(false)}
-                  className="p-2 hover:bg-[#1A1A1A] rounded-full transition-colors"
+                  className={cn("p-2 rounded-full transition-colors", theme === 'dark' ? "hover:bg-[#1A1A1A] text-[#444]" : "hover:bg-gray-100 text-gray-400")}
                 >
                   <X size={20} />
                 </button>
               </div>
               
-              <div className="flex-1 overflow-y-auto p-6 font-mono text-sm leading-relaxed whitespace-pre-wrap">
+              <div className={cn(
+                "flex-1 overflow-y-auto p-6 font-mono text-sm leading-relaxed whitespace-pre-wrap",
+                theme === 'dark' ? "text-[#AAA]" : "text-gray-600"
+              )}>
                 {memoryContent}
               </div>
               
-              <div className="p-6 border-t flex justify-end shrink-0">
+              <div className={cn(
+                "p-6 border-t flex justify-end shrink-0",
+                theme === 'dark' ? "border-[#1E1E1E]" : "border-gray-100 shadow-[0_-4px_12px_rgba(0,0,0,0.02)]"
+              )}>
                 <button 
                   onClick={() => setIsMemoryModalOpen(false)}
                   className="px-6 py-2 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-500 transition-all"

@@ -16,6 +16,16 @@
   --muted: #888888;
 }
 
+[data-theme='light'] {
+  --bg: #F9FAFB;
+  --card-bg: #FFFFFF;
+  --ink: #111827;
+  --line: #E5E7EB;
+  --accent: #2563EB;
+  --accent-hover: #1D4ED8;
+  --muted: #6B7280;
+}
+
 body {
   background-color: var(--bg);
   color: var(--ink);

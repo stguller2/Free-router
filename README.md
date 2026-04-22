@@ -1,62 +1,38 @@
 # 🚀 Free Router
 
-Ücretsiz yapay zeka modellerini tek bir arayüzden yönetmenizi sağlayan, akıllı yönlendirme ve gelişmiş hafıza sistemine sahip tam kapsamlı bir AI platformu.
+**Free Router**, ücretsiz yapay zeka modellerine tek bir merkezden erişmenizi sağlayan **canlı bir web platformudur.** Herhangi bir kurulum gerektirmeden, tarayıcınız üzerinden en güçlü AI modellerini (Gemini, Llama 3, Claude vb.) akıllı yönlendirme ve ortak hafıza desteğiyle kullanmanıza olanak tanır.
 
 ![App Screenshot](https://picsum.photos/seed/ai-hub/1200/600)
 
-## ✨ Öne Çıkan Özellikler
+## ✨ Neden Free Router?
 
-- **Çoklu Sağlayıcı Desteği**: Gemini, OpenAI, Anthropic, DeepSeek, Groq, Mistral ve OpenRouter entegrasyonu.
-- **🛡️ Akıllı Failover (Hata Toleransı)**: Bir model hata verdiğinde (bakiye yetersizliği, kota dolumu vb.) sistem otomatik olarak en uygun alternatif modeli bulur ve isteği kesintisiz devam ettirir.
-- **🧠 Hafıza Sarayı (Memory Palace)**: Tüm modellerle olan geçmiş etkileşimlerinizi analiz eden ve ortak bir bağlam oluşturan gelişmiş JSON tabanlı hafıza sistemi.
-- **⚙️ Backend Akıllı Yönlendirici**: İstekleriniz içeriğine göre (Yazılım, Mantık, Yaratıcı, Hızlı Yanıt) analiz edilir ve en başarılı modele otomatik yönlendirilir.
-- **🧹 Otomatik Temizlik**: Kredisi biten veya hata veren modeller listeden her dakika otomatik olarak temizlenir, liste her zaman güncel kalır.
-- **🔄 Dinamik Model Senkronizasyonu**: OpenRouter üzerindeki yeni ücretsiz modeller 24 saatte bir otomatik olarak taranır ve sisteme eklenir.
+Geleneksel chatbotların aksine **Free Router**, arka planda çalışan bir karar mekanizmasıdır. Sizin için en uygun modeli seçer, modeller arasındaki geçişleri yönetir ve tüm modellerin ortak bir hafızaya sahip olmasını sağlar.
 
-## 🛠️ Teknoloji Yığını
+- **🌐 Kurulumsuz Erişim**: Bulut üzerinde çalışan bir web uygulamasıdır, indirme veya kurulum gerektirmez.
+- **🛡️ Kesintisiz Sohbet (Failover)**: Bir modelin kotası dolduğunda veya hata verdiğinde, sistem diğer modelleri otomatik olarak devreye sokar.
+- **🧠 Evrensel Hafıza**: Modeller değişse bile geçmişinizi unutmayan, tüm modellerin paylaştığı bir "Hafıza Sarayı" sistemi mevcuttur.
+- **⚡ Akıllı Yönlendirme**: Yazılım sorularınız Claude/GPT-4'e, hızlı özetleme istekleriniz Gemini/Llama'ya otomatik olarak yönlendirilir.
 
-- **Frontend**: React 19, TypeScript, Tailwind CSS, Framer Motion.
-- **Backend**: Express.js, Tsx.
-- **AI**: Google Generative AI SDK (@google/genai), OpenRouter API.
+## 🛠️ Temel Yetenekler
 
-## ⌨️ Klavye Kısayolları
+- **Dosya Desteği**: PDF, resim ve metin belgelerini analiz edebilir.
+- **Ses Kontrolü**: Sesli mesaj gönderimi ve ses analizi desteği.
+- **Kota Takibi**: Ücretsiz model limitlerini sizin için takip eder ve kredisi bitenleri listeden temizler.
+- **Dinamik Liste**: OpenRouter üzerindeki yeni ücretsiz modelleri otomatik olarak keşfeder ve sunar.
 
-| Kısayol | İşlev |
-| :--- | :--- |
-| `Alt + R` | Tüm model kotalarını sıfırla |
-| `Alt + 1-9` | Modeller arasında hızlı geçiş yap |
-| `Ctrl + Enter` | Mesajı gönder |
+## ⌨️ Kullanıcı Kısayolları
 
-## 🚀 Başlangıç
+Web arayüzünde verimliliğinizi artırmak için:
+- `Alt + R`: Tüm yerel kotaları sıfırla.
+- `Alt + 1-9`: Kategoriler arası/modeller arası hızlı seçim.
+- `Ctrl + Enter`: Mesajı anında gönder.
 
-1. **Bağımlılıkları Yükleyin**:
-   ```bash
-   npm install
-   ```
+## 🔧 Geliştiriciler İçin (Opsiyonel)
 
-2. **Çevre Değişkenlerini Ayarlayın**:
-   `.env.example` dosyasını baz alarak bir `.env` dosyası oluşturun ve API anahtarlarınızı ekleyin:
-   ```env
-   GEMINI_API_KEY=...
-   OPENROUTER_API_KEY=...
-   ```
-
-3. **Geliştirme Sunucusunu Başlatın**:
-   ```bash
-   npm run dev
-   ```
-
-## 🤖 Yönlendirme Kategorileri
-
-Sistem, istemlerinizi şu kategorilere göre puanlar:
-- **Yazılım ve Teknik**: Kodlama, hata ayıklama.
-- **Mantık ve Analiz**: Karmaşık problemler, matematik.
-- **Yaratıcı Yazım**: Hikaye, içerik üretimi.
-- **Hızlı Yanıt**: Özetleme, kısa sorular.
-
-## 🧠 Hafıza Yönetimi
-
-Uygulama `/memories` dizininde dosya tabanlı bir saklama alanı kullanır. Veriler `MemPalace` sınıfı üzerinden JSON formatında işlenir ve modellerin "uzun süreli hafızası" olarak sistem talimatlarına (System Prompt) enjekte edilir.
+Eğer projeyi kendi sunucunuzda host etmek isterseniz:
+1. `npm install` ile bağımlılıkları yükleyin.
+2. `.env` dosyasında `GEMINI_API_KEY` ve `OPENROUTER_API_KEY` değerlerini tanımlayın.
+3. `npm run dev` komutu ile sunucuyu ayağa kaldırın.
 
 ---
 
